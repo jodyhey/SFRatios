@@ -6,7 +6,7 @@ from scipy.optimize import minimize,minimize_scalar
 from scipy.stats import chi2
 sys.path.append("./")
 sys.path.append("../")
-import SF_Ratios_functions 
+import SFRatios_functions as SRF
 import math
 import argparse
 import warnings
@@ -92,15 +92,15 @@ def runROC(args):
             gvals_and_results.append([-np.random.random()*max2Ns,1]) # half the g=2Ns values are nonzero 
         for i in range(ntrials):
             g = gvals_and_results[i][0]
-            sfs,sfsfolded = SF_Ratios_functions.simsfs(theta,g,n,misspec,None, False)
+            sfs,sfsfolded = SRF.simsfs(theta,g,n,misspec,None, False)
             thetastart = theta
             gstart = -1.0
             if dofolded:
-                thetagresult = minimize(SF_Ratios_functions.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,sfsfolded),method="Powell",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
-                g0result = minimize_scalar(SF_Ratios_functions.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,sfsfolded),method='Brent')
+                thetagresult = minimize(SRF.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,None,sfsfolded),method="Powell",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
+                g0result = minimize_scalar(SRF.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,None,sfsfolded),method='Brent')
             else:
-                thetagresult = minimize(SF_Ratios_functions.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,sfs),method="Powell",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
-                g0result = minimize_scalar(SF_Ratios_functions.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,sfs),method='Brent')
+                thetagresult = minimize(SRF.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,None,sfs),method="Powell",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
+                g0result = minimize_scalar(SRF.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,None,sfs),method='Brent')
 
             thetagdelta = 2*(-thetagresult.fun + g0result.fun)
             # if g < 0:
@@ -127,11 +127,11 @@ def runROC(args):
         AUC = sum([(FPrate[i+1]-FPrate[i])*(TPrate[i+1]+TPrate[i])/2 for i in range(len(TPrate)-1) ])
         plt.plot(FPrate,TPrate)
         # plt.title("Poisson Random Field Likelihood Ratio Test ROC ({} SFS)".format("folded" if dofolded else "unfolded"))
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
+        plt.xlabel("False Positive Rate",fontsize=16)
+        plt.ylabel("True Positive Rate",fontsize=16)
         # plt.set_ylim(top=1.0,bottom=0.0)
         # plt.set_xlim(left=0.0,right=1.0)
-        plt.text(0.1,0.1,"AUC = {:.3f}".format(AUC),fontsize=14)
+        plt.text(0.1,0.1,"AUC = {:.3f}".format(AUC),fontsize=16)
 
         plt.savefig(rocfilename)
         # plt.show()
@@ -154,20 +154,20 @@ def runROC(args):
             gvals_and_results.append([-np.random.random()*max2Ns,1]) # half the g=2Ns values are negative 
         for i in range(ntrials):
             g = gvals_and_results[i][0]
-            nsfs,ssfs,ratios = SF_Ratios_functions.simsfsratio(thetaN,thetaS,1.0,n,None,dofolded,misspec,"fixed2Ns",[g],None,False,None)
+            nsfs,ssfs,ratios = SRF.simsfsratio(thetaN,thetaS,1.0,n,None,dofolded,misspec,"fixed2Ns",[g],None,False,None)
             thetastart = 100.0
             gstart = -1.0
             if usethetaratio:
                 thetaratiostart = thetaS/thetaN
-                ratiothetagresult =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaratio,
-                    np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
-                ratiothetag0result = minimize_scalar(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaratio,
-                    bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,ratios),method='Brent')   
+                ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaratio,
+                    np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,None,args.thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
+                ratiothetag0result = minimize_scalar(SRF.NegL_SFSRATIO_estimate_thetaratio,
+                    bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,None,args.thetaNspace,ratios),method='Brent')   
             else:
                 thetastart = thetaN
-                ratiothetagresult =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaS_thetaN,
+                ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
                     np.array([thetastart,thetastart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
-                ratiothetag0result =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaS_thetaN,
+                ratiothetag0result =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
                     np.array([thetastart,thetastart]),args=(n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10)])                    
             thetagdelta = 2*(-ratiothetagresult.fun + ratiothetag0result.fun)
             for t in x2thresholds:
@@ -192,11 +192,11 @@ def runROC(args):
         AUC = sum([(FPrate[i+1]-FPrate[i])*(TPrate[i+1]+TPrate[i])/2 for i in range(len(TPrate)-1) ])
         plt.plot(FPrate,TPrate)
         # plt.title("Site Frequency Ratio Likelihood Ratio Test ROC ({} SFS)".format("folded" if dofolded else "unfolded"))
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
+        plt.xlabel("False Positive Rate",fontsize=16)
+        plt.ylabel("True Positive Rate",fontsize=16)
         # plt.set_ylim(top=1.0,bottom=0.0)
         # plt.set_xlim(left=0.0,right=1.0)
-        plt.text(0.1,0.1,"AUC = {:.3f}".format(AUC),fontsize=14)
+        plt.text(0.1,0.1,"AUC = {:.3f}".format(AUC),fontsize=16)
         plt.savefig(rocfilename)
         # plt.show()
         tabledic = {"chi2":x2thresholds,"prob":pvalues,"TruePosRate":TPrate,"FalsePosRate":FPrate}
@@ -226,16 +226,16 @@ def runpower(args):
         results = [[0]*len(pvalues) for i in range(len(gvals))] #results[i][j] has the count of significant results for gval[i] and pval[j]
         for gj,g in enumerate(gvals):
             for i in range(ntrialsperg):
-                sfs,sfsfolded = SF_Ratios_functions.simsfs(theta,g,n,misspec,None, False)
+                sfs,sfsfolded = SRF.simsfs(theta,g,n,misspec,None, False)
                 thetastart = theta 
                 gstart = -1.0
                 try:
-                    thetagresult = minimize(SF_Ratios_functions.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,sfsfolded),method="Nelder-Mead",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
+                    thetagresult = minimize(SRF.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,None,sfsfolded),method="Nelder-Mead",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
                 except Exception as e:
                     print([thetastart,gstart])
                     print([(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
                     exit()
-                g0result = minimize_scalar(SF_Ratios_functions.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,sfsfolded),method='Brent')
+                g0result = minimize_scalar(SRF.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,None,sfsfolded),method='Brent')
                 thetagdelta = 2*(-thetagresult.fun + g0result.fun)
                 for ti,t in enumerate(x2thresholds):
                     if thetagdelta > t:
@@ -250,9 +250,9 @@ def runpower(args):
                 temp.append(results[gj][ti])
             plt.plot(gvals,temp,label=plabels[ti])
             tabledic[plabels[ti]] = temp
-        plt.xlabel("g (selection)")
-        plt.ylabel("Probability of rejecting Null")
-        plt.legend(title="$\\alpha$")
+        plt.xlabel(r"$\gamma$ (2Ns)",fontsize=16)
+        plt.ylabel("Probability of rejecting Null",fontsize=16)
+        plt.legend(title="$\\alpha$",fontsize=16)
         plt.savefig(plotfilename)
         plt.clf()
         valstoscreenandfile("Power_basicPRF",tabledic,args,writetoscreen=False)
@@ -261,7 +261,7 @@ def runpower(args):
         thetaS = args.thetaS
         thetaN = args.thetaN
         thetaNspacerange=100
-        thetaNspace = np.logspace(np.log10(thetaN/math.sqrt(thetaNspacerange)), np.log10(thetaN*math.sqrt(thetaNspacerange)), num=101) 
+        thetaNspace = np.logspace(np.log10(thetaN/math.sqrt(thetaNspacerange)), np.log10(thetaN*math.sqrt(thetaNspacerange)), num=51) 
         usethetaratio = args.usethetaratio
         if usethetaratio:        
             plotfilename = op.join(args.outdir,'POWER_SFratio_{}_estimate_thetaratio_{}_n{}_{}.pdf'.format(args.outfilelabel,thetaS/thetaN,n,foldstring))
@@ -272,19 +272,19 @@ def runpower(args):
         results = [[0]*len(pvalues) for i in range(len(gvals))] #results[i][j] has the count of significant results for gval[i] and pval[j]
         for gj,g in enumerate(gvals):
             for i in range(ntrialsperg):
-                nsfsfolded,ssfsfolded,ratios = SF_Ratios_functions.simsfsratio(thetaN,thetaS,1.0,n, None, dofolded,misspec, "fixed2Ns",[g],None, False,None)
+                nsfsfolded,ssfsfolded,ratios = SRF.simsfsratio(thetaN,thetaS,1.0,n, None, dofolded,misspec, "fixed2Ns",[g],None, False,None)
                 thetastart = thetaS #100.0
                 gstart = -1.0
                 if usethetaratio:
                     thetaratiostart = thetaS/thetaN
-                    ratiothetagresult =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaratio,
-                        np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
-                    ratiothetag0result = minimize_scalar(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaratio,
-                        bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,thetaNspace,ratios),method='Brent')   
+                    ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaratio,
+                        np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,None,thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
+                    ratiothetag0result = minimize_scalar(SRF.NegL_SFSRATIO_estimate_thetaratio,
+                        bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,None,thetaNspace,ratios),method='Brent')   
                 else:
-                    ratiothetagresult =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaS_thetaN,
+                    ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
                         np.array([thetastart,thetastart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
-                    ratiothetag0result =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaS_thetaN,
+                    ratiothetag0result =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
                         np.array([thetastart,thetastart]),args=(n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10)])                                        
                 thetagdelta = 2*(-ratiothetagresult.fun + ratiothetag0result.fun)
                 for ti,t in enumerate(x2thresholds):
@@ -300,9 +300,9 @@ def runpower(args):
                 temp.append(results[gj][ti])
             plt.plot(gvals,temp,label=plabels[ti])
             tabledic["P="+plabels[ti]] = temp
-        plt.xlabel("g (selection)")
-        plt.ylabel("Probability of rejecting Null")
-        plt.legend(title="$\\alpha$")
+        plt.xlabel(r"$\gamma$ (2Ns)",fontsize=16)
+        plt.ylabel("Probability of rejecting Null",fontsize=16)
+        plt.legend(title="$\\alpha$",fontsize=16)
         plt.savefig(plotfilename)
         # plt.show()
         valstoscreenandfile("Power_SFratio",tabledic,args,writetoscreen=False)
@@ -328,12 +328,12 @@ def runchi2(args):
 
         #check chi^2 approximation of LLR for basic FW PRF 
         for i in range(ntrials):
-            sfs,sfsfolded = SF_Ratios_functions.simsfs(theta,g,n,misspec,None,False)
+            sfs,sfsfolded = SRF.simsfs(theta,g,n,misspec,None,False)
             sfs = sfsfolded if dofolded else sfs
             thetastart = theta
             gstart = -1.0
-            thetagresult = minimize(SF_Ratios_functions.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,sfs),method="Powell",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
-            g0result = minimize_scalar(SF_Ratios_functions.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,sfs),method='Brent')
+            thetagresult = minimize(SRF.NegL_SFS_Theta_Ns,np.array([thetastart,gstart]),args=(n,dofolded,includemisspec,None,sfs),method="Powell",bounds=[(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
+            g0result = minimize_scalar(SRF.NegL_SFS_Theta_Ns,bracket=(thetastart/10,thetastart*10),args = (n,dofolded,includemisspec,None,sfs),method='Brent')
 
             thetagdelta = -thetagresult.fun + g0result.fun
             if thetagdelta < 0:
@@ -346,11 +346,11 @@ def runchi2(args):
         x = np.linspace(0, max(thetagcumobsv), 200)
         # plt.plot(thetagcumobsv,cprob)
         plt.plot(thetagcumobsv,cprob, label=r'Observed: cumulative distribution of $-2\Delta$')
-        plt.ylabel('Cumulative Probability', fontsize=14)
+        plt.ylabel('Cumulative Probability', fontsize=16)
         # Setting the X-axis label with Greek letters and superscript
-        plt.xlabel(r'$-2\Delta $, $\chi^2 \, 1\mathrm{df}$', fontsize=14)
+        plt.xlabel(r'$-2\Delta $, $\chi^2 \, 1\mathrm{df}$', fontsize=16)
         plt.plot(x, chi2.cdf(x, df=numdf), label=r'Expected: $\chi^2$ 1df')
-        plt.legend(fontsize=14)
+        plt.legend(fontsize=16)
         plt.savefig(figfn)
         # plt.show()
         plt.clf()
@@ -370,18 +370,18 @@ def runchi2(args):
         ratiothetacumobsv = []
         numnegdeltas = 0
         for i in range(ntrials):
-            nsfs,ssfs,ratios = SF_Ratios_functions.simsfsratio(thetaN,thetaS,1.0,n,None,dofolded,misspec,"fixed2Ns",[g],None,False,None)
+            nsfs,ssfs,ratios = SRF.simsfsratio(thetaN,thetaS,1.0,n,None,dofolded,misspec,"fixed2Ns",[g],None,False,None)
             gstart = -1.0
             if usethetaratio:
                 thetaratiostart = thetaS/thetaN
-                ratiothetagresult =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaratio,
-                    np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
-                ratiothetag0result = minimize_scalar(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaratio,
-                    bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,ratios),method='Brent')   
+                ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaratio,
+                    np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,None,args.thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
+                ratiothetag0result = minimize_scalar(SRF.NegL_SFSRATIO_estimate_thetaratio,
+                    bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,None,args.thetaNspace,ratios),method='Brent')   
             else:
-                ratiothetagresult =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaS_thetaN,
+                ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
                     np.array([thetastart,thetastart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
-                ratiothetag0result =  minimize(SF_Ratios_functions.NegL_SFSRATIO_estimate_thetaS_thetaN,
+                ratiothetag0result =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
                     np.array([thetastart,thetastart]),args=(n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10)])                    
             thetagdelta = -ratiothetagresult.fun + ratiothetag0result.fun
             if thetagdelta < 0:
@@ -393,11 +393,11 @@ def runchi2(args):
         cprob = np.array([i/len(ratiothetacumobsv) for i in range(1,len(ratiothetacumobsv)+1)])
         x = np.linspace(0, max(ratiothetacumobsv), 200)
         plt.plot(ratiothetacumobsv,cprob,label=r'Observed: cumulative distribution of $-2\Delta$')
-        plt.ylabel('Cumulative Probability',fontsize=14)
+        plt.ylabel('Cumulative Probability',fontsize=16)
         # Setting the X-axis label with Greek letters and superscript
-        plt.xlabel(r'$-2\Delta $, $\chi^2 \, 1\mathrm{df}$', fontsize=14)
+        plt.xlabel(r'$-2\Delta $, $\chi^2 \, 1\mathrm{df}$', fontsize=16)
         plt.plot(x, chi2.cdf(x, df=numdf), label=r'Expected: $\chi^2$ 1df')
-        plt.legend(fontsize=14)
+        plt.legend(fontsize=16)
         plt.savefig(figfn)
         # print(numnegdeltas)
         # plt.show()
@@ -432,6 +432,7 @@ def parsecommandline():
     args.analysis = args.analysis.upper()  
     if JH_turn_off_options_for_release:   
         args.usethetaratio = True 
+    args.thetaNspace = np.logspace(np.log10(args.thetaN/math.sqrt(100)), np.log10(args.thetaN*math.sqrt(args.thetaN)), num=51) # used for likelihood calculation,  logspace integrates bettern than linspace
     return args
 
     # return parser

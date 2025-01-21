@@ -1,5 +1,5 @@
 """
-Program:  SF_Ratios_functions.py
+Program:  SFRatios_functions.py
 Author: Jody Hey
 
     poisson random field SFS work 
@@ -34,68 +34,84 @@ import  mpmath
 import math
 import scipy
 import scipy.integrate
-import scipy.special
-from scipy.special import erf, gamma, gammainc,gammaincc,seterr
+from scipy.optimize import golden
+from scipy.special import erf, gamma, gammainc,gammaincc,seterr,_sf_error
 from functools import lru_cache
-# from scipy import integrate
 import warnings
-import traceback
+import logging
 import os
 sys.path.append("./")
 current_dir = os.path.dirname(os.path.abspath(__file__)) # the directory of this python script
 # Add the current directories to sys.path
 sys.path.append(current_dir)
-
+print(current_dir)
 # Get the directory of this script
 current_dir = os.path.dirname(os.path.abspath(__file__))
+
 # Create error log in the same directory as the script
-errorlogfile = os.path.join(current_dir, "SFS_Ratios_functions_errorlog.txt")
+# Configure logging
+# logging.basicConfig(
+#     filename = os.path.join(current_dir, "SFS_Ratios_functions_errorlog.txt"),
+#     level=logging.ERROR,
+#     format='%(asctime)s - %(levelname)s\n%(message)s\nStack trace:\n%(exc_info)s\n'
+#     )
 
-# warnings.showwarning = warn_with_traceback
-# warning/error handler
-def custom_exception_handler(exc_type, exc_value, exc_traceback):
-    # Log all exceptions (warnings and errors) to the file
-    with open(errorlogfile, 'a') as f:
-        f.write(f"\n{exc_type.__name__}: {exc_value}\n")
-        traceback.print_tb(exc_traceback, file=f)
-        f.write("\n")
+
+# Test if we can write to the directory
+log_path = os.path.join(current_dir, "SFS_Ratios_functions_errorlog.txt")
+try:
+    # Try to open the file for writing to test permissions
+    with open(log_path, 'a'):
+        pass
     
-    # Print to stderr
-    print(f"{exc_type.__name__}: {exc_value}", file=sys.stderr)
-    traceback.print_tb(exc_traceback, file=sys.stderr)
-    
-    # If it's not a warning, re-raise the exception
-    if not issubclass(exc_type, Warning):
-        raise exc_value.with_traceback(exc_traceback)
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.ERROR,
+        format='%(asctime)s - %(levelname)s\n%(message)s\nStack trace:\n%(exc_info)s\n'
+    )
+except (IOError, PermissionError) as e:
+    print(f"Warning: Could not set up logging to {log_path}")
+    print(f"Error: {str(e)}")
+    # Fall back to logging to stderr
+    logging.basicConfig(
+        level=logging.ERROR,
+        format='%(asctime)s - %(levelname)s\n%(message)s\nStack trace:\n%(exc_info)s\n'
+    )
 
-# fuunction to write something arbitrary to errorlogfile 
-def write_to_errlog(message):
-    with open(errorlogfile, 'a') as file:
-        file.write(f"\nNONERROR MESSAGE: {message}\n")
-        traceback.print_stack(file=file)
-        file.write("\n")
+def handle_error(e: Exception, context: str = ""):
+    logging.error(context, exc_info=True)  # exc_info=True includes stack trace
+    print(f"{context}\nError: {str(e)}", file=sys.stderr)
+    sys.exit(1)
 
-# Set the custom exception handler
-sys.excepthook = custom_exception_handler
-warnings.simplefilter("error", RuntimeWarning) # make RuntimeWarnings errors so we can trap them
-seterr(all='raise')
+# warnings.simplefilter("error", RuntimeWarning) # make RuntimeWarnings errors so we can trap them
+# seterr(all='raise')
    
 
-#constants
 
+# tried out alternative parameterizations, in which the true mean of the random variable is used as a parameter
+# but this also requires that any simulator that is used implement this,  and SLiM would be hard to rejigger for this
+lognormalparameterization = "Lmean"  # Tmean for actual mean of the variable (typically negative) or Lmean for mean of log of variable 
+gammaparameterization =  "Tmean" # "m0mean"  # m0mean for the mean of the variable if the variable had a max of 0 (this value is always positive even if true mean is negative), Tmean for true mean accounting for max2Ns != 0
+
+#constants
 sqrt2 =pow(2,1/2)
 sqrt_2_pi = np.sqrt(2 * np.pi)
 sqrt_pi_div_2 = np.sqrt(np.pi/2)
 
-
 # constants for x values in 2Ns integration see getXrange()
+minimum_2Ns_location = -10000 # the lowest value for the mode  or mean of a continuous distribution that will be considered,  lower than this an the likelihood just returns inf 
 discrete3lowerbound = -1000
 discrete3upperbound = 10
 discrete3_xvals = np.concatenate([np.linspace(discrete3lowerbound,-5,20),np.linspace(-4.9,-1 + 1e-3,10),np.linspace(-1,1 - 1e-3,20),np.linspace(1,discrete3upperbound,20)]) # only for uni3fixed distribution 
 lowerbound_2Ns_integration = -100000 # exclude regions below this from integrations,  arbitrary but saves some time
-fillnegxvals=np.flip(-np.logspace(0,5, 100)) # -1 to -100000
-himodeintegraterange = np.logspace(-2,5,50)  # tried himodeintegraterange = np.logspace(-2,5,100)  but not much improvement
-minimum_2Ns_location = -10000 # the lowest value for the mode  or mean of a continuous distribution that will be considered,  lower than this an the likelihood just returns inf 
+
+# reduced the lengths of arrays used for numerical integration
+# fillnegxvals=np.flip(-np.logspace(0,5, 100)) # -1 to -100000
+# himodeintegraterange = np.logspace(-2,5,50)  # tried himodeintegraterange = np.logspace(-2,5,100)  but not much improvement
+
+# shorter versions, seem to work 
+himodeintegraterange = np.logspace(-2,5,30)
+fillnegxvals=np.flip(-np.logspace(0,5, 50)) # -1 to -100000
 
 #  replaced with coth_without1()
 # def coth(x):
@@ -147,20 +163,32 @@ def coth_without1(x):
 @lru_cache(maxsize=100000) #helps a little bit with erf()
 def erf_cache(x):
     """
-        absolute values above 6 just return 1 with the sing of the x 
+        absolute values above 6 just return 1 with the sign of the x 
         else, try scipy
-        else try mpmath 
+        else try approximations suggested by claude
+        mpmath is slow 
 
     """
-    if abs(x) >= 6:
+    # if abs(x) >= 6:
+    #     return math.copysign(1, x)
+    # else:
+    #     try:
+    #         return scipy.special.erf(x)
+    #     except  (ValueError, ArithmeticError, _sf_error.SpecialFunctionError):
+    #         return mpmath.erf(x) # for more precision 
+    if abs(x) > 6:
         return math.copysign(1, x)
-    else:
-        try:
-            return scipy.special.erf(x)
-        except:
-            return mpmath.erf(x)
-    
-
+    try:
+        return scipy.special.erf(x)
+    except  (ValueError, ArithmeticError, _sf_error.SpecialFunctionError) as e:
+        # For very small x, erf(x) ≈ (2/√π) * x
+        if abs(x) < 1e-7:
+            return (2/math.sqrt(math.pi)) * x
+        # For intermediate values use log-space calculation
+        sign = 1 if x >= 0 else -1
+        return sign * math.sqrt(1 - math.exp(-4*x*x/math.pi))   
+    except Exception as e:
+        handle_error(e, "erf_cache: x {}".format(x))
     
 @lru_cache(maxsize=5000000) # helps a lot,  e.g. factor of 2 or more for hyp1f1 
 def cached_hyp1f1(a, b, z):
@@ -169,23 +197,24 @@ def cached_hyp1f1(a, b, z):
     """
     # try:
     #     return scipy.special.hyp1f1(a, b, z)
-    # except:
+    # except  (ValueError, ArithmeticError, _sf_error.SpecialFunctionError):
     #     return float(mpmath.hyp1f1(a, b, z))
     try:
         temp = scipy.special.hyp1f1(a, b, z)
-    except:
+    except  (ValueError, ArithmeticError, _sf_error.SpecialFunctionError):
         try:
             return mpmath.hyp1f1(a, b, z)
-        except:
+        except  (ValueError, ArithmeticError, _sf_error.SpecialFunctionError):
             if z < 0:
                 return 0
             else:
                 return math.inf
+    except Exception as e:  
+        handle_error(e, "cached_hyp1f1 a {} b{} z{}".format(a,b,z))
     if temp in (math.nan,math.inf,math.inf):
         return mpmath.hyp1f1(a, b, z)
     else:
         return temp
-
 
 def clear_cache(outf = False):
     cache_functions = {
@@ -198,7 +227,9 @@ def clear_cache(outf = False):
         try:
             func.cache_clear()
         except AttributeError:
-            pass  # Function doesn't have cache_info or cache_clear    
+            pass  # Function doesn't have cache_info or cache_clear  
+        except Exception as e:
+            handle_error(e, "Unexpected error")   
     if outf:
         outf.write("\nCaching results:\n")
         for name, func in cache_functions.items():
@@ -206,7 +237,8 @@ def clear_cache(outf = False):
                 outf.write(f"{name} cache: {func.cache_info()}\n")
             except AttributeError:
                 pass  # Function doesn't have cache_info or cache_clear
-
+            except Exception as e:
+                handle_error(e, "Unexpected error") 
 
 def logprobratio(alpha,beta,z):  # called by NegL_SFSRATIO_estimate_thetaS_thetaN(),  not up to date as of 7/1/2024
     """
@@ -224,7 +256,6 @@ def logprobratio(alpha,beta,z):  # called by NegL_SFSRATIO_estimate_thetaS_theta
         However the Díaz-Francés and Rubio function gives -inf often enough to cause problems for the optimizer,  so we set final probability p = max(p,1e-50)
 
     """
-
     try:
         delta = beta
         beta = alpha
@@ -241,80 +272,104 @@ def logprobratio(alpha,beta,z):  # called by NegL_SFSRATIO_estimate_thetaS_theta
         temp2denom = sqrt_2_pi *  betasqroot * delta*pow(z2boverb,1.5)
         temp2 = mpmath.fdiv(temp2num,temp2denom )
         p = mpmath.fadd(temp1,temp2)
-        
         logp = math.log(p) if p > 1e-307  else float(mpmath.log(p))
         return logp 
     
     except Exception as e:
-        print("Caught an exception in logprobratio: {}  p {}".format(e,p))  
-        
-        exit()
+        handle_error(e, "exception in logprobratio: alpha {} beta {} z {}".format(alpha,beta,z)) 
 
 def intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm):
     """
         integrates over the delta term in the probability of a ratio of two normal distributions
     """
-    def rprobdelta(z,beta,delta,betasqroot):
+    def safe_log1p_exp(x): # suggested by claude so we can handle log of exp with floats 
+        if x > 709:  # np.log(np.finfo(np.float64).max)
+            return x  # Because log(1 + exp(x)) ≈ x for large x
+        else:
+            return np.log1p(np.exp(x))
+
+    def newrpobdeltadef(z,beta, delta,betasqroot): # 12/11/2024 faster, but not as forgiving of value ranges 
+        try:
+            delta2 = delta*delta
+            log_term1 = -(1+beta)/(2*delta2) - np.log(math.pi*z2b1*betasqroot)
+            log_term2 = powz12/(2*delta2*z2b1)
+            # erftemp = stable_erf(z1/(sqrt2*sqz2b1*delta))
+            erftemp = erf_cache(z1/(sqrt2*sqz2b1*delta))
+            log_temp3 = log_term2 + np.log(sqrt_pi_div_2*z1*abs(erftemp))
+            log_result = log_term1 + safe_log1p_exp(log_temp3 - np.log(delta*sqz2b1))
+            result = mpmath.exp(log_result) # log_result is very often out of float range 
+            return result
+        except  (ValueError, ArithmeticError) as e:
+            error_msg = str(e).lower()
+            if "overflow" in error_msg:
+                if log_result < 0:  # Check if result would be large negative
+                    return -np.finfo(np.float64).max
+                return np.finfo(np.float64).max
+            elif "underflow" in error_msg:
+                return 0.0  
+            return 0.0    
+        except Exception as e:
+            handle_error(e,"newrprobdelta z {} beta {}  delta {} betasqroot {}".format(z,beta,delta,betasqroot))
+
+    def rprobdelta(z,beta,delta,betasqroot): # older,  slower,  can handle wider range of values 
         delta2 = delta*delta
+
         try:
             forexptemp = -(1+beta)/(2*delta2)
-
             exptemp = math.exp(forexptemp) if -745 <= forexptemp <= 709 else mpmath.exp(forexptemp)
             try:
                 if betasqroot==0.0:
                     betasqroot=mpmath.sqrt(beta)
-                try:
+                try :
                     temp1 = exptemp/(math.pi*z2b1*betasqroot)
-                except:
+                except  (ValueError, ArithmeticError):
                     temp1 = mpmath.fdiv(exptemp,(math.pi*z2b1*betasqroot))
-
-            except:
+            except  (ValueError, ArithmeticError):
                 temp1 = mpmath.fdiv(exptemp,(math.pi*z2b1*betasqroot))
-            fortemp2 = pow(z1,2)/(2*delta2*z2b1)
+            fortemp2 = powz12/(2*delta2*z2b1)
             temp2 = math.exp(fortemp2) if -745 <= fortemp2 <= 709 else mpmath.exp(fortemp2)
             erftemp = erf_cache(z1/(sqrt2*sqz2b1*delta))
             try:
                 temp3 = temp2*sqrt_pi_div_2*z1*erftemp
                 if temp3 in (0,math.inf):
                     temp3 = mpmath.fmul(temp2,sqrt_pi_div_2*z1*erftemp)
-            except:
+            except  (ValueError, ArithmeticError):
                 temp3 = mpmath.fmul(temp2,sqrt_pi_div_2*z1*erftemp)
             try:
                 temp4 = 1 + (temp3/(delta*sqz2b1))
                 if temp4 in (0,math.inf):
                     temp4 = mpmath.fadd(1,mpmath.fdiv(temp3,(delta*sqz2b1)))
-            except:
+            except  (ValueError, ArithmeticError,ZeroDivisionError):
                 temp4 = mpmath.fadd(1,mpmath.fdiv(temp3,(delta*sqz2b1)))
+            except :
+                pass
             p = mpmath.fmul(temp1,temp4)
             return p
         except Exception as e:
-            print(f"Caught an exception in rprobdelta: {e}")  
-            estr = ["rprobdelta in intdeltalogprobratio error:".format(e)]
-            # estr.append("vals: i {} p {}".format(i,p))
-            estr.append("vals: z {} beta {} delta {}".format(z,beta,delta))
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            estr.append(f"Exception type: {exc_type}")
-            estr.append(f"Exception value: {exc_value}")
-            estr.append(f"Traceback: {exc_traceback}")	                
-            # print("\n".join(estr))
-            write_to_errlog("\n".join(estr))
-            return 0               
-            exit()    
+            handle_error(e,"rprobdelta z {} beta {}  delta {} betasqroot {}".format(z,beta,delta,betasqroot))
     
-    beta = alpha
+    beta = float(alpha)
     z2 = z*z
     z1 = 1+z
+    powz12 = pow(z1,2)
     z2b1 = 1+z2/beta
     sqz2b1 = math.sqrt(z2b1)
     betasqroot = math.sqrt(beta) 
     uy = thetaNspace * nc /(i*(nc -i)) if foldxterm else thetaNspace/i    
     deltavals = 1/np.sqrt(uy)
-    rprob_density_values = np.array([rprobdelta(z,beta,delta,betasqroot) for delta in deltavals])
-    # rprob = scipy.integrate.simpson(rprob_density_values,x=thetaNspace)
-    rprob = np.trapz(rprob_density_values,thetaNspace)
 
-    logrprob = math.log(rprob) if rprob > 1e-307 else float(mpmath.log(rprob))
+    # using the older rprobdelta() function
+    # rprob_density_values = np.array([rprobdelta(z,beta,delta,betasqroot) for delta in deltavals])
+    # rprob = np.trapz(rprob_density_values,thetaNspace)
+    # logrprob = math.log(rprob) if rprob > 1e-307 else float(mpmath.log(rprob))
+    #using the newer rprobdelta() function
+    altrprob_density_values = np.array([newrpobdeltadef(z,beta,delta,betasqroot) for delta in deltavals])
+    altrprob = np.trapz(altrprob_density_values,thetaNspace)
+    logrprob = math.log(altrprob) if altrprob > 1e-307 else float(mpmath.log(altrprob))
+    # print(z,beta,rprob,logrprob,altlogrprob)
+
     return logrprob
+
 
 def ratio_expectation(p,i,max2Ns,nc,dofolded,misspec,densityof2Ns):# not used in awhile 7/11/2024
     """
@@ -350,7 +405,7 @@ def ratio_expectation(p,i,max2Ns,nc,dofolded,misspec,densityof2Ns):# not used in
             temp2 = mpmath.fdiv(temp2num,temp2denom )
             p = float(mpmath.fadd(temp1,temp2))
         except Exception as e:
-            print(f"Caught an exception in ztimesprobratio: {e}")  
+            handle_error(e,"ztimesprobratio: z {} alpha {} beta {}  doneg {}".format(z,alpha,beta,doneg))
         if p < 0.0:
             return 0.0
         if doneg:
@@ -390,80 +445,129 @@ def prf_selection_weight(nc, i, g, dofolded, misspec):
                 us = (1 - misspec) / i + misspec / (nc - i)
             else:
                 us = 1 / i
-        return us
-
-    tempc_without1 = coth_without1(g)  # coth(g) - 1 if g > 0 else coth(g) + 1 
-
-    if dofolded:
-        temph1 = cached_hyp1f1(i, nc, 2*g)
-        temph2 = cached_hyp1f1(nc - i, nc, 2*g)
-        temph = temph1 + temph2
-        if g > 0:
-            if tempc_without1 == 0 or temph == math.inf: # it seems that when temph is inf  tempc_without1 is very near 0 
-                us = (nc / (2 * i * (nc - i))) * 4 
-            else:
-                us = (nc / (2 * i * (nc - i))) * (2 + 2 * (1+tempc_without1) - (tempc_without1 * temph))
-
-        else:
-            us = (nc / (2 * i * (nc - i))) * (2 + 2 * (-1+tempc_without1) - (tempc_without1 * temph - 2*temph))
-
-        return us
     else:
-        if misspec in (None, False, 0.0):
-            temph = cached_hyp1f1(i, nc, 2*g)
-            if g > 0:
-                if tempc_without1 == 0 or temph == math.inf: # it seems that when temph is inf  tempc_without1 is very near 0 
-                    us = (nc / (2 * i * (nc - i))) * 2                 
-                else:
-                    us = (nc / (2 * i * (nc - i))) * (1 + (1+tempc_without1) - (tempc_without1 * temph))
-            else:
-                us = (nc / (2 * i * (nc - i))) * (1 + (-1+tempc_without1) - (tempc_without1 * temph - 2*temph))
-            return us
-        else:
+        tempc_without1 = coth_without1(g)  # coth(g) - 1 if g > 0 else coth(g) + 1 
+
+        if dofolded:
             temph1 = cached_hyp1f1(i, nc, 2*g)
             temph2 = cached_hyp1f1(nc - i, nc, 2*g)
-            temph = (1 - misspec) * temph1 + misspec * temph2
+            temph = temph1 + temph2
             if g > 0:
                 if tempc_without1 == 0 or temph == math.inf: # it seems that when temph is inf  tempc_without1 is very near 0 
-                    us = (2) * (nc / (2 * i * (nc - i))) 
+                    us = (nc / (2 * i * (nc - i))) * 4 
                 else:
-                    us = (1 +(1+tempc_without1) + (- tempc_without1 * temph)) * (nc / (2 * i * (nc - i)))
-            else:
+                    us = (nc / (2 * i * (nc - i))) * (2 + 2 * (1+tempc_without1) - (tempc_without1 * temph))
 
-                us = (1 +(-1+tempc_without1) - (tempc_without1 * temph - 2*temph)) * (nc / (2 * i * (nc - i)))
-            return us
+            else:
+                us = (nc / (2 * i * (nc - i))) * (2 + 2 * (-1+tempc_without1) - (tempc_without1 * temph - 2*temph))
+        else:
+            if misspec in (None, False, 0.0):
+                temph = cached_hyp1f1(i, nc, 2*g)
+                if g > 0:
+                    if tempc_without1 == 0 or temph == math.inf: # it seems that when temph is inf  tempc_without1 is very near 0 
+                        us = (nc / (2 * i * (nc - i))) * 2                 
+                    else:
+                        us = (nc / (2 * i * (nc - i))) * (1 + (1+tempc_without1) - (tempc_without1 * temph))
+                else:
+                    us = (nc / (2 * i * (nc - i))) * (1 + (-1+tempc_without1) - (tempc_without1 * temph - 2*temph))
+            else:
+                temph1 = cached_hyp1f1(i, nc, 2*g)
+                temph2 = cached_hyp1f1(nc - i, nc, 2*g)
+                temph = (1 - misspec) * temph1 + misspec * temph2
+                if g > 0:
+                    if tempc_without1 == 0 or temph == math.inf: # it seems that when temph is inf  tempc_without1 is very near 0 
+                        us = (2) * (nc / (2 * i * (nc - i))) 
+                    else:
+                        us = (1 +(1+tempc_without1) + (- tempc_without1 * temph)) * (nc / (2 * i * (nc - i)))
+                else:
+
+                    us = (1 +(-1+tempc_without1) - (tempc_without1 * temph - 2*temph)) * (nc / (2 * i * (nc - i)))
+    if us  < 0.0:
+        return 0.0
+    else:
+        return us 
+
 
 def getXrange(densityof2Ns,g,max2Ns,xpand = False):
     """
         get the range of integration for the density of 2Ns, build an array with values either side of the mode 
         if xpand,  get more intervals for numerical integration 
     """
-    def prfdensity(xval,g):
+    def prfdensity(xval,g,first_call=False):
         if densityof2Ns=="lognormal":   
-            mean = g[0]
-            std_dev = g[1]
-            x = float(max2Ns-xval)
-            p = (1 / (x * std_dev * sqrt_2_pi)) * np.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2))
-            if p==0.0:
-                p= float(mpmath.fmul(mpmath.fdiv(1, (x * std_dev * sqrt_2_pi)), mpmath.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2))))
-        # elif densityof2Ns=="gamma":
-        #     alpha = g[0]
-        #     beta = g[1]
-        #     x = float(max2Ns-xval)
-        #     try:
-        #         # p = ((x**(alpha-1))*np.exp(-x / beta))/((beta**alpha)*math.gamma(alpha))
-        #         #shouldn't this be
-        #         p = ((beta**alpha)*(x**(alpha-1))*np.exp(-x / beta))/math.gamma(alpha)
-        #     except:
-        #         p = 0.0
-        elif densityof2Ns=="gamma": # reparamaterize with alpha and mean (mu)
-            alpha = g[0]
-            mu = g[1]
-            x = float(max2Ns-xval)
-            try:
-                p = (np.exp(-alpha*x/mu) * (x**(alpha-1)) * ((mu/alpha)**(-alpha)) ) / math.gamma(alpha) 
-            except:
-                p = 0.0        
+            if lognormalparameterization == "Lmean": 
+                mean = g[0]
+                std_dev = g[1]
+                x = float(max2Ns-xval)
+                p = (1 / (x * std_dev * sqrt_2_pi)) * np.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2))
+                if p==0.0:
+                    p= float(mpmath.fmul(mpmath.fdiv(1, (x * std_dev * sqrt_2_pi)), mpmath.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2))))
+            else: #"Tmean"
+                mean = g[0]  # true mean of the lognormally distributed rv,  not the mean of the log of the random variable 
+                sigma = g[1] 
+                x = float(max2Ns-g)
+                max_minus_mean = max2Ns-mean
+                if first_call == True:
+                    prfdensity.sigmasquare = np.square(sigma)
+                    prfdensity.sigmasquare8 = 8*prfdensity.sigmasquare
+                    prfdensity.sigmasqrt2pi = sqrt_2_pi*sigma
+                    sigmasquareterm = prfdensity.sigmasquare
+                    sigmasquare8term = prfdensity.sigmasquare8
+                    sigmasqrt2piterm =prfdensity.sgimasqrt2pi
+                else:
+                    sigmasquareterm = prfdensity.sigmasquare
+                    sigmasquare8term = prfdensity.sigmasquare8
+                    sigmasqrt2piterm =prfdensity.sgimasqrt2pi
+                p = np.exp(-np.square(sigmasquareterm + 2 * np.log(x)-2*np.log(max_minus_mean))/sigmasquare8term)/(sigmasqrt2piterm*x)
+                if p==0.0:
+                    p = mpmath.fdiv(
+                        mpmath.exp(
+                            -mpmath.fdiv(
+                                mpmath.power(
+                                    mpmath.fadd(
+                                        sigmasquareterm,
+                                        mpmath.fsub(
+                                            mpmath.fmul(2, mpmath.log(x)),
+                                            mpmath.fmul(2, mpmath.log(max_minus_mean))
+                                        )
+                                    ),
+                                    2
+                                ),
+                                sigmasquare8term
+                            )
+                        ),
+                        mpmath.fmul(sigmasqrt2piterm, x)
+                    )           
+
+        elif densityof2Ns=="gamma": # reparamaterize with shape and mean 
+            if gammaparameterization == "m0mean": 
+                mean = g[0]
+                shape = g[1]
+                x = float(max2Ns-xval)
+                if first_call == True: # save some time by saving this part of the gamma density wich does not depend on x 
+                    prfdensity.holdgammaterm = (mean/shape)**(-shape) / math.gamma(shape)
+                    gammaterm = prfdensity.holdgammaterm 
+                else:
+                    gammaterm = prfdensity.holdgammaterm             
+                try:
+                    p = np.exp(-shape*x/mean) * (x**(shape-1)) * gammaterm
+                except  (ValueError, ArithmeticError):
+                    p = 0.0                 
+            else: # "Tmean"
+                mean = g[0]
+                shape = g[1]
+                max_minus_mean = max2Ns-mean
+                x = float(max2Ns-xval)
+                if first_call == True: # save some time by saving this part of the gamma density wich does not depend on x 
+                    prfdensity.holdgammaterm = (max_minus_mean/shape)**(-shape) / math.gamma(shape)
+                    gammaterm = prfdensity.holdgammaterm 
+                else:
+                    gammaterm = prfdensity.holdgammaterm             
+                try:
+                    p = np.exp(-shape*x/max_minus_mean) * (x**(shape-1)) * gammaterm
+                except  (ValueError, ArithmeticError):
+                    p = 0.0        
+
         elif densityof2Ns == "normal":
             mean = g[0]
             std_dev = g[1]
@@ -506,26 +610,48 @@ def getXrange(densityof2Ns,g,max2Ns,xpand = False):
             numSDs = 5 
             himodeR = himodeintegraterange
             lowmodenumint = 8
+            # lowmodenumint = 5
 
         if densityof2Ns=="normal":
             mode = ex = g[0]
             sd = g[1]
         elif densityof2Ns == "lognormal":
-            stdev_squared = g[1]*g[1]
-            sd = math.sqrt((math.exp(stdev_squared) - 1) * math.exp(2*g[0] + stdev_squared))
-            ex =  -math.exp(g[0] + stdev_squared/2)
-            mode = -math.exp(g[0] - stdev_squared)
-            if max2Ns:
-                ex += max2Ns
-                mode += max2Ns         
+            if lognormalparameterization == "Lmean": 
+                stdev_squared = g[1]*g[1]
+                sd = math.sqrt((math.exp(stdev_squared) - 1) * math.exp(2*g[0] + stdev_squared))
+                ex =  -math.exp(g[0] + stdev_squared/2)
+                mode = -math.exp(g[0] - stdev_squared)
+                if max2Ns:
+                    ex += max2Ns
+                    mode += max2Ns   
+            else: #"Tmean"   
+                mean = g[0]
+                sigmasq = g[1]*g[1]
+                sd = math.sqrt( (math.exp(sigmasq)-1)* math.pow(max2Ns-mean,2))
+                ex = mean
+                mode = math.exp(-3*sigmasq/2)*(mean + max2Ns*(math.exp(3*sigmasq/2)-1))                    
 
         elif densityof2Ns == "gamma":
-            sd = math.sqrt(g[1]*g[1]/g[0])
-            ex = -g[1]
-            mode = 0.0 if g[0] < 1 else -(g[0]-1)*g[1]/g[0]
-            if max2Ns:
-                mode += max2Ns 
-                ex += max2Ns
+            if gammaparameterization == "m0mean": 
+                mean = g[0]
+                shape = g[1]
+                sd = math.sqrt(mean*mean/shape)
+                ex = -mean
+                mode = 0.0 if shape < 1 else -(shape-1)*mean/shape
+                if max2Ns:
+                    mode += max2Ns 
+                    ex += max2Ns                
+            else: # "Tmean"
+                mean = g[0]
+                shape = g[1]
+                ex = mean
+                sd = math.sqrt(math.pow(max2Ns-mean,2)/shape)
+                if shape <= 1:
+                    mode = max2Ns
+                else:
+                    mode = (max2Ns + (shape-1)*mean)/shape
+
+
 
         #build an array of 2Ns values for integration
         listofarrays = []    
@@ -559,7 +685,7 @@ def getXrange(densityof2Ns,g,max2Ns,xpand = False):
                     xvals[-1] = upperlimitforintegration
                 else: # append upperlimitforintegration
                     xvals = np.append(xvals, upperlimitforintegration)
-            except:
+            except  (ValueError, ArithmeticError):
                 pass
         # remove any values less than lowerbound_2Ns_integration
         xvals = xvals[xvals >= lowerbound_2Ns_integration]
@@ -568,6 +694,7 @@ def getXrange(densityof2Ns,g,max2Ns,xpand = False):
         # the 1.1 factor is to avoid something being right next to xvals[0]
         #scipy.integrate.simpson() seems to handle xvals arrays that are even in length
         # compares well with np.trapz().   integrands closer to 1,  about the same speed 
+        # more testing showed it simpson is worse. 
         if len(xvals) >= 10:
             xvals = np.concatenate([fillnegxvals[fillnegxvals < (xvals[0]*1.1)], xvals])
         else: 
@@ -584,23 +711,20 @@ def getXrange(densityof2Ns,g,max2Ns,xpand = False):
         xvals = np.sort(xvals)
         # Remove duplicates 
         xvals = np.unique(xvals)
-        mean_density_values = np.array([x*prfdensity(x,g) for x in xvals])
+        mean_density_values = np.array([x*prfdensity(x,g, first_call=None) for x in xvals])
         ex = np.trapz(mean_density_values,xvals)
-        var_density_values = np.array([x*x*prfdensity(x,g) for x in xvals])
+        var_density_values = np.array([x*x*prfdensity(x,g, first_call=None) for x in xvals])
         var = np.trapz(var_density_values,xvals)
-        # print(ex,var,var - ex*ex)
         try:
             sd = math.sqrt(var - ex*ex)
-        except:
+        except  (ValueError, ArithmeticError):
             sd = np.nan
         mode = np.nan
-
-    density_values = np.array([prfdensity(x,g) for x in xvals])
-    # densityadjust = scipy.integrate.simpson(density_values,x=xvals)
+    density_values = np.array([prfdensity(x,g,first_call=True if j == 0 else False) for j,x in enumerate(xvals)])
     densityadjust = np.trapz(density_values,xvals)
     return ex,mode,sd,densityadjust,xvals
  
-def prfdensityfunction(g,densityadjust,nc ,i,args,max2Ns,densityof2Ns,foldxterm,misspec):
+def prfdensityfunction(g,densityadjust,nc ,i,args,max2Ns,densityof2Ns,foldxterm,misspec,first_call=True):
     """
     returns the product of poisson random field weight for a given level of selection (g) and a probability density for g 
     used for integrating over g 
@@ -608,29 +732,80 @@ def prfdensityfunction(g,densityadjust,nc ,i,args,max2Ns,densityof2Ns,foldxterm,
     """
     us = prf_selection_weight(nc ,i,g,foldxterm,misspec)
     if densityof2Ns=="lognormal":   
-        mean = args[0]
-        std_dev = args[1]
-        x = float(max2Ns-g)
-        p = ((1 / (x * std_dev * sqrt_2_pi)) * np.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2)))/densityadjust
-        if p==0.0:
-           p= float(mpmath.fmul(mpmath.fdiv(1, (x * std_dev * sqrt_2_pi)), mpmath.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2))))/densityadjust
-    # elif densityof2Ns=="gamma":
-    #     alpha = args[0]
-    #     beta = args[1]
-    #     x = float(max2Ns-g)
-    #     try:
-    #         p = (((x**(alpha-1))*np.exp(-x / beta))/((beta**alpha)*math.gamma(alpha)))/densityadjust
-    #     except:
-    #         p = float((mpmath.power(x,alpha-1)*mpmath.exp(-x/beta)/(mpmath.power(beta,alpha)*mpmath.gamma(alpha)))/densityadjust)
-    elif densityof2Ns=="gamma":
-        alpha = args[0]
-        mu = args[1]
-        x = float(max2Ns-g)
-        try:
-            p = (np.exp(-alpha*x/mu) * (x**(alpha-1)) * ((mu/alpha)**(-alpha)) ) / (math.gamma(alpha)*densityadjust)
-        except:
-            p = float((mpmath.exp(-alpha*x/mu) * mpmath.power(x,alpha-1) * mpmath.power(mu/alpha,-alpha) ) /( mpmath.gamma(alpha) * densityadjust) )
+        if lognormalparameterization == "Lmean": 
+            mean = args[0]  # true mean of the lognormally distributed rv,  not the mean of the log of the random variable 
+            std_dev = args[1] 
+            x = float(max2Ns-g)
+            p = ((1 / (x * std_dev * sqrt_2_pi)) * np.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2)))/densityadjust
+            if p==0.0:
+                p= float(mpmath.fmul(mpmath.fdiv(1, (x * std_dev * sqrt_2_pi)), mpmath.exp(-(np.log(x)- mean)**2 / (2 * std_dev**2))))/densityadjust
+        else: #"Tmean"
+            mean = args[0]  # true mean of the lognormally distributed rv,  not the mean of the log of the random variable 
+            sigma = args[1] 
+            x = float(max2Ns-g)
+            max_minus_mean = max2Ns-mean
+            if first_call == True:
+                prf_selection_weight.sigmasquare = np.square(sigma)
+                prf_selection_weight.sigmasquare8 = 8*prf_selection_weight.sigmasquare
+                prf_selection_weight.sigmasqrt2pi = sqrt_2_pi*sigma*densityadjust
+                sigmasquareterm = prf_selection_weight.sigmasquare
+                sigmasquare8term = prf_selection_weight.sigmasquare8
+                sigmasqrt2piterm =prf_selection_weight.sgimasqrt2pi
+            else:
+                sigmasquareterm = prf_selection_weight.sigmasquare
+                sigmasquare8term = prf_selection_weight.sigmasquare8
+                sigmasqrt2piterm =prf_selection_weight.sgimasqrt2pi
+            p = np.exp(-np.square(sigmasquareterm + 2 * np.log(x)-2*np.log(max_minus_mean))/sigmasquare8term)/(sigmasqrt2piterm*x)
+            if p==0.0:
+                p = mpmath.fdiv(
+                    mpmath.exp(
+                        -mpmath.fdiv(
+                            mpmath.power(
+                                mpmath.fadd(
+                                    sigmasquareterm,
+                                    mpmath.fsub(
+                                        mpmath.fmul(2, mpmath.log(x)),
+                                        mpmath.fmul(2, mpmath.log(max_minus_mean))
+                                    )
+                                ),
+                                2
+                            ),
+                            sigmasquare8term
+                        )
+                    ),
+                    mpmath.fmul(sigmasqrt2piterm, x)
+                )           
 
+    elif densityof2Ns=="gamma":
+        if gammaparameterization == "m0mean": 
+            mean = args[0]
+            shape = args[1]
+            x = float(max2Ns-g)
+            if first_call == True: # save some time by saving this part of the gamma density wich does not depend on x 
+                prf_selection_weight.holdgammaterm =(mean/shape)**(-shape) / (math.gamma(shape)*densityadjust)
+                gammaterm = prf_selection_weight.holdgammaterm 
+            else:
+                gammaterm = prf_selection_weight.holdgammaterm 
+            try:
+                p = np.exp(-shape*x/mean) * (x**(shape-1)) * gammaterm
+            except  (ValueError, ArithmeticError):
+                p = float(mpmath.exp(-shape*x/mean) * mpmath.power(x,shape-1)) * gammaterm
+
+        else: # "Tmean"
+            mean = args[0]
+            shape = args[1]
+            max_minus_mean = max2Ns-mean
+            x = float(max2Ns-g)
+            if first_call == True: # save some time by saving this part of the gamma density wich does not depend on x 
+                prf_selection_weight.holdgammaterm =(max_minus_mean/shape)**(-shape) / (math.gamma(shape)*densityadjust)
+                gammaterm = prf_selection_weight.holdgammaterm 
+            else:
+                gammaterm = prf_selection_weight.holdgammaterm 
+            try:
+                p = np.exp(-shape*x/max_minus_mean) * (x**(shape-1)) * gammaterm
+            except  (ValueError, ArithmeticError):
+                p = float(mpmath.exp(-shape*x/max_minus_mean) * mpmath.power(x,shape-1) * gammaterm)
+     
     elif densityof2Ns=="normal": # shouldn't need densityadjust for normal
         mu = args[0]
         std_dev= args[1]
@@ -671,8 +846,9 @@ def integrate2Ns(densityof2Ns,max2Ns,g,nc,i,foldxterm,misspec,xvals,densityadjus
     """
         xvals is a numpy array 
     """
-    density_values = np.array([prfdensityfunction(x,densityadjust,nc ,i,g,max2Ns,densityof2Ns,foldxterm,misspec) for x in xvals])
-    # intval = scipy.integrate.simpson(density_values,x=xvals)
+    density_values = np.array([prfdensityfunction(x,densityadjust,nc ,i,g,max2Ns,
+                                                  densityof2Ns,foldxterm,misspec,
+                                                    first_call=True if j == 0 else False) for j,x in enumerate(xvals)])
     intval = np.trapz(density_values,xvals)
     return intval
     
@@ -701,8 +877,7 @@ def NegL_SFS_Theta_Ns(p,nc,dofolded,includemisspec,maxi,counts):
             try:
                 temp = -us +  math.log(us)*count - math.lgamma(count+1)
             except Exception as e:
-                print("L_SFS_Theta_Ns_bin_i problem ",nc,i,g,us,theta,count)
-                exit()
+                handle_error(e,"L_SFS_Theta_Ns_bin_i problem: nc {} i {} g {} us {} theta {} count {}".format(nc,i,g,us,theta,count))
         return temp     
 
     assert(counts[0]==0)
@@ -780,17 +955,10 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
                 sigmay = math.sqrt(uy)
                 beta = 1/sigmay
                 return logprobratio(alpha,beta,z)
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf            
             except Exception as e:
-                estr = ["NegL_SFSRATIO_estimate_thetaS_thetaN calc_bin_i math.inf error:".format(e)]
-                # estr.append("vals: i {} p {}".format(i,p))
-                estr.append("vals: i {} p {} density model {}".format(i,p,densityof2Ns ))
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                estr.append(f"Exception type: {exc_type}")
-                estr.append(f"Exception value: {exc_value}")
-                estr.append(f"Traceback: {exc_traceback}")	                
-                # print("\n".join(estr))
-                write_to_errlog("\n".join(estr))
-                return -math.inf              
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
         else:
             try:
                 ux = thetaS*integrate2Ns(densityof2Ns,max2Ns,g,nc,i,foldxterm,misspec,g_xvals,densityadjust)
@@ -803,17 +971,10 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
                 sigmay = math.sqrt(uy)
                 beta = 1/sigmay
                 return logprobratio(alpha,beta,z)   
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf
             except Exception as e:
-                estr = ["calc_bin_i math.inf error:".format(e)]
-                # estr.append("vals: i {} p {}".format(i,p))
-                estr.append("vals: i {} p {} density model {}".format(i,p,densityof2Ns ))
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                estr.append(f"Exception type: {exc_type}")
-                estr.append(f"Exception value: {exc_value}")
-                estr.append(f"Traceback: {exc_traceback}")	                
-                # print("\n".join(estr))
-                write_to_errlog("\n".join(estr))
-                return -math.inf  
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
             
     try:
         p = list(p)
@@ -849,13 +1010,14 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
         unki += 2          
     if max2Ns==None and densityof2Ns in ("lognormal","gamma"):
         if fix_mode_0: # not in use as of 6/1/2024
-            if densityof2Ns=="lognormal":
-                max2Ns = math.exp(p[holdki] - pow(p[holdki],2))
-            if densityof2Ns=="gamma":
-                if p[holdki] < 1:
-                    max2Ns = 0.0
-                else:
-                    max2Ns = (p[holdki] - 1)*p[holdki+1]
+            exit()
+            # if densityof2Ns=="lognormal":
+            #     max2Ns = math.exp(p[holdki] - pow(p[holdki],2))
+            # if densityof2Ns=="gamma":
+            #     if p[holdki] < 1:
+            #         max2Ns = 0.0
+            #     else:
+            #         max2Ns = (p[holdki] - 1)*p[holdki+1]
         else:
             max2Ns = p[unki]
             unki += 1
@@ -877,7 +1039,6 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
         temp =  calc_bin_i(i,zvals[i])
         sum += temp
         if sum == -math.inf:
-            write_to_errlog("inf in calc_bin_i i:{} z:{} p:{}".format(i,zvals[i]," ".join(list(map(str,p)))))
             return math.inf
     return -sum   
 
@@ -926,31 +1087,16 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
                             ux = pmass*prf_selection_weight(nc,i,pval,foldxterm,misspec) + (1-pmass) * ux
 
                     alpha = thetaratio*ux/(nc /(i*(nc -i)) if foldxterm else 1/i )
-                # tried integrating over negative values of the ratio, but it did not improve things
-                # trynegratiointegration = True
-                # if trynegratiointegration and z <= 0.0:
-                #     negz = -10
-                #     temp0 = intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)      
-                #     tempneg = intdeltalogprobratio(alpha,negz,thetaNspace,nc,i,foldxterm)      
-                #     a = abs(negz)
-                #     b = min(temp0,tempneg)
-                #     c = max(temp0,tempneg)
-                #     returnval = a*(b+ (c-b)/2)
-                # else:
-                #     returnval = intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)      
+
                 returnval = intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)      
 
                 return returnval
+
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf
             except Exception as e:
-                estr = ["NegL_SFSRATIO_estimate_thetaratio calc_bin_i math.inf error:".format(e)]
-                estr.append("vals: i {} p {} density model {}".format(i,p,densityof2Ns ))
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                estr.append(f"Exception type: {exc_type}")
-                estr.append(f"Exception value: {exc_value}")
-                estr.append(f"Traceback: {exc_traceback}")	                
-                # print("\n".join(estr))
-                write_to_errlog("\n".join(estr))
-                return -math.inf                
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
+
         else:
             try:
                 ux = integrate2Ns(densityof2Ns,max2Ns,g,nc,i,foldxterm,misspec,g_xvals,densityadjust)
@@ -960,17 +1106,11 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
                     ux =  (1-pmass)*ux + pmass* prf_selection_weight(nc,i,pval,foldxterm,misspec)
                 alpha = thetaratio*ux/(nc /(i*(nc -i)) if foldxterm else 1/i )
                 return intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)        
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf
             except Exception as e:
-                estr = ["NegL_SFSRATIO_estimate_thetaratio calc_bin_i math.inf error:".format(e)]
-                # estr.append("vals: i {} p {}".format(i,p))
-                estr.append("vals: i {} p {} density model {}".format(i,p,densityof2Ns ))
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                estr.append(f"Exception type: {exc_type}")
-                estr.append(f"Exception value: {exc_value}")
-                estr.append(f"Traceback: {exc_traceback}")	                
-                # print("\n".join(estr))
-                write_to_errlog("\n".join(estr))
-                return -math.inf  
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
+
     if isinstance(p,(int,float)):
         p = [p]
     else:
@@ -1011,13 +1151,14 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
         unki += 2        
     if max2Ns==None and densityof2Ns in ("lognormal","gamma"):
         if fix_mode_0: # not in use as of 6/1/2024 
-            if densityof2Ns=="lognormal":
-                max2Ns = math.exp(p[1] - p[2]*p[2])
-            if densityof2Ns=="gamma":
-                if p[1] < 1:
-                    max2Ns = 0.0
-                else:
-                    max2Ns = (p[1] - 1)*p[2]
+            exit()
+            # if densityof2Ns=="lognormal":
+            #     max2Ns = math.exp(p[1] - p[2]*p[2])
+            # if densityof2Ns=="gamma":
+            #     if p[1] < 1:
+            #         max2Ns = 0.0
+            #     else:
+            #         max2Ns = (p[1] - 1)*p[2]
         else:
             max2Ns = p[unki]
             unki += 1
@@ -1040,10 +1181,9 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
         temp =  calc_bin_i(i,zvals[i])
         sum += temp
         if sum == -math.inf:
-            write_to_errlog("inf in calc_bin_i i:{} z:{} p:{}".format(i,zvals[i]," ".join(list(map(str,p)))))
             return math.inf
-    if densityof2Ns in ("normal","lognormal","gamma"):
-        # penalize if ex or mode is too low, penalty is 10^6 times the difference 
+    if densityof2Ns in ("normal","lognormal","gamma"): 
+        # kludgy,  penalize if ex or mode is too low, penalty is 10^6 times the difference 
         if ex <  minimum_2Ns_location:
             sum -=  (minimum_2Ns_location - ex)*1e6
         elif mode <  minimum_2Ns_location :
@@ -1087,25 +1227,11 @@ def NegL_CodonPair_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,fix
                 weightratio = (((1-misspec)*numweight + misspec*denomweight)/((1-misspec)*denomweight + misspec*numweight)) if includemisspec else numweight/denomweight
 
                 alpha = thetaratio*weightratio
-            return intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)       
+            return intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)   
+        except (ValueError, ArithmeticError) as e:
+            return -math.inf
         except Exception as e:
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                # Get the stack trace as a string
-                stack_trace = traceback.extract_tb(exc_traceback)
-                # Get the line number where the exception occurred
-                line_number = stack_trace[-1].lineno
-
-                estr = [f"calc_bin_i error: {str(e)} on line {line_number}"]
-                estr.append(f"vals: i {i} p {p}")
-                estr.append(f"Exception type: {exc_type}")
-                estr.append(f"Exception value: {exc_value}")
-                estr.append("Traceback:")
-                estr.extend(traceback.format_tb(exc_traceback))
-                
-                print("\n".join(estr))
-                write_to_errlog("\n".join(estr))
-                exit()
-                return -math.inf             
+            handle_error(e,"calc_bin_i: i {} z {}".format(i,z))            
             
     if isinstance(p,(int,float)):
         p = [p]
@@ -1130,7 +1256,6 @@ def NegL_CodonPair_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,fix
         temp =  calc_bin_i(i,zvals[i])
         sum += temp
         if sum == -math.inf:
-            write_to_errlog("inf in calc_bin_i i:{} z:{} p:{}".format(i,zvals[i]," ".join(list(map(str,p)))))
             return math.inf
     return -sum   
 
@@ -1201,10 +1326,8 @@ def simsfs(theta,g,nc , misspec,maxi, returnexpected,pm0=None,pmmass=None,pmval=
         try:
             sfs = [np.random.poisson(expected) for expected in sfsexp]
         except Exception as e:
-            print(e)
-            print(g)
-            print(sfsexp)
-            exit()
+            handle_error(e,"simsfs theta {} g {} sfsexp {} z {}".format(theta,g,simsfs))   
+
     sfsfolded = [0] + ([sfs[i] + sfs[nc-i] for i in range(1,nc//2)] + [sfs[nc//2]] if nc % 2 == 0 else  [sfs[i] + sfs[nc-i] for i in range(1,1+nc//2)])
     if maxi:
         assert maxi < nc , "maxi setting is {} but nc  is {}".format(maxi,nc )

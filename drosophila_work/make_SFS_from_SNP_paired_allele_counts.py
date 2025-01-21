@@ -7,7 +7,7 @@ reads a text file with SNP allele counts formatted like this:
     
 the first column is the total NEUTRAL allele count, followed by count of NEUTRAL derived alleles 
 the third and fourth columns are for SELEECTED allele counts 
-return a file with two SFSs, ready for input to SF_Ratios.py 
+return a file with two SFSs, ready for input to SFRatios.py 
 """
 import sys
 import argparse

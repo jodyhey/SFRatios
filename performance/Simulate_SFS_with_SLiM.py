@@ -12,6 +12,7 @@ import subprocess
 import numpy as np
 import math
 import socket
+import glob 
 
 # This might fix the RuntimeWarning with np.divide
 np.seterr(divide='ignore', invalid='ignore')
@@ -32,7 +33,7 @@ def readSFS(file):
 
 
 # Function to run SLiM as a external process
-def runSlim(simulation, mu, rec, popSize, seqLen, ns, diploidsamplesize, modelfile,nsdist, param1, param2, outdir, donotcleandir = False):
+def runSlim(args,simulation, mu, rec, popSize, seqLen, ns, diploidsamplesize, modelpath,density2Ns, param1, param2, outdir, donotcleandir = False):
     # Path to SLiM
     # slim = "/usr/local/bin/slim"
     # modelsdir = "/Users/tur92196/WorkDir/prfratio/slim/models"
@@ -63,30 +64,7 @@ def runSlim(simulation, mu, rec, popSize, seqLen, ns, diploidsamplesize, modelfi
     #     sys.exit()        
 
     # Distribution of fitness effects dict
-    avail_nsdist = {"fixed": "Fixed 2Ns values",
-                    "lognormal": "2Ns values sample from a lognormal with param1=meanlog, param2=sdlog",
-                    "gamma": "2Ns values sample from a gamma with param1=shape, param2=scale"}
-    if nsdist in avail_nsdist:
-            # print("Ok, " + avail_nsdist.get(nsdist) + " is available!")
-            if nsdist != "fixed":
-                if param1 + param2 == 0.0:
-                    print("You selected a different distribution, but did not changed the default values. Are you sure you want to proceed with no selection?")
-                    sys.exit()
-
-                # This enforces non-neutral mutations starts neutrally 
-                # because s values are calculate with a custom function
-                # for lognormal or gamma (not the ones built-in SLiM)
-                elif ns != 0:
-                    ns = 0
-            
-            else:
-                # This enforces the logic of not using these parameters for fixed 2Ns simulations
-                # The values doens't matter becuase they are not used in the _fixed.slim simulations
-                if param1 + param2 != 0:
-                    param1 = param2 = 0
-    else:
-        print("Sorry, DFE " + nsdist + " is not supported!")
-        sys.exit()
+    
 
     # Sample a seed every function call
     seed = str(int(np.random.uniform(low=100000000, high=900000000)))
@@ -97,8 +75,10 @@ def runSlim(simulation, mu, rec, popSize, seqLen, ns, diploidsamplesize, modelfi
                           "-d", ("N="+str(popSize)), "-d", ("L="+str(seqLen)), "-d", ("Ns="+str(ns)), "-d", ("n="+str(diploidsamplesize)),
                           "-d", ("param1="+str(param1)), "-d", ("param2="+str(param2)),
                           "-d", ("outDir="+"'"+outdir+"'"), 
-                          modelsdir + "/" + modelfile + ".slim"
-                        #   (modelsdir + "/" + model + "_" + nsdist + ".slim")
+                          "-d", ("maxg="+str(args.max2Ns)),
+                        #   modelsdir + "/" + modelfile + ".slim"
+                            modelpath
+                        #   (modelsdir + "/" + model + "_" + density2Ns + ".slim")
                           ], capture_output=True)
     if run.stderr != b'':
         print("slim problem ",run.stderr)
@@ -111,9 +91,19 @@ def runSlim(simulation, mu, rec, popSize, seqLen, ns, diploidsamplesize, modelfi
         selectedsfsfile = (outdir + "/" + ("fsfs_selected_" + str(simulation) + "_" + seed + ".txt"))
     neutral_sfs = readSFS(file = neutralsfsfile)
     selected_sfs = readSFS(file = selectedsfsfile)
+    if args.fill0binSelfrac:
+        neutral_sfs.insert(0,seqLen*(1-args.fill0binSelfrac) -sum(neutral_sfs))
+        selected_sfs.insert(0,seqLen*args.fill0binSelfrac -sum(selected_sfs))
     if donotcleandir==False:
-        os.remove(neutralsfsfile)
-        os.remove(selectedsfsfile)
+        # os.remove(neutralsfsfile)
+        # os.remove(selectedsfsfile)
+        # Use glob to find files matching the pattern
+        files_to_remove = glob.glob(os.path.join(outdir, "*_" + seed + ".txt"))
+
+        # Iterate and remove each file
+        for file_path in files_to_remove:
+            os.remove(file_path)
+            # print(f"Removed: {file_path}")        
     
     return seed, neutral_sfs, selected_sfs, run.stderr, run.stdout
 
@@ -151,9 +141,9 @@ def readANDcombineSFSs(diploidsamplesize, filename, path):
 # Pipeline to run multiple sequences (or genes, chrms, etc) for multiples simulations (or replicates)
 # It is a wrapper for SLiM code and it allows run different models with different parameters, especially with Ns
 # Each replicate (or simulated SFS) is actually a combination of many sequence or gene SFSs#.
-def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000, seqLen = 10000, 
-                     ns = 0.0, nsdist = "lognormal", nsdistargs = [1.0, 1.0], diploidsamplesize = 40,isfolded = False,
-                     modelfile = "constant", nSeqs = 5, parent_dir = "results/prfratio", savefile = True, optdirstr=False, donotcleandir = False):
+def simulateSFSslim(args,nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000, seqLen = 10000, 
+                     ns = 0.0, density2Ns = "lognormal", nsdistargs = [1.0, 1.0], diploidsamplesize = 40,foldit = False,
+                     modelpath = "constant", nSeqs = 5, output_dir = "results/prfratio", savefile = True, donotcleandir = False):
 
     # Constant value parameters:
     # Intron length and total intron size
@@ -165,7 +155,7 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
     exon_totalL = 8*exonL
 
     # SFS format
-    if isfolded:
+    if foldit:
         sfs_format = "folded"
         numbins = diploidsamplesize-1
     else:
@@ -173,22 +163,22 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
         numbins = 2*diploidsamplesize-1
     
     # Define thetas 
-
+    modelname = os.path.split(modelpath)[1][:-5] # just the name of the model file, minus '.slim'
     thetaNeutral = (4*popSize*mu)*intron_totalL*nSeqs
-    if "ibottleneck" in modelfile:
+    if "ibottleneck" in modelname:
         thetaNeutral = thetaNeutral/10
-    if "iexpansion"  in modelfile:
+    if "iexpansion"  in modelname:
         thetaNeutral = thetaNeutral * 10
-    if "OOAgravel2011" in modelfile:
+    if "OOAgravel2011" in modelname:
         thetaNeutral = thetaNeutral * 122.24
     
     # Selected theta
     thetaSelected = (4*popSize*mu)*exon_totalL*nSeqs
-    if "ibottleneck" in modelfile:
+    if "ibottleneck" in modelname:
         thetaSelected = thetaSelected /10
-    if "iexpansion" in modelfile:
+    if "iexpansion" in modelname:
         thetaSelected  = thetaSelected * 10
-    if "OOAgravel2011" in modelfile:
+    if "OOAgravel2011" in modelname:
         thetaSelected = thetaSelected * 122.24
 
     # Second, check if the distribution exists
@@ -197,34 +187,24 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
                     "lognormal": "2Ns values sample from a lognormal with param1=meanlog, param2=sdlog",
                     "gamma": "2Ns values sample from a gamma with param1=shape, param2=scale"}
     
-    if True : #nsdist in avail_nsdist:
-        print("Ok, " + avail_nsdist.get(nsdist) + " exists")
-        if nsdist != "fixed":
+    if True : #density2Ns in avail_nsdist:
+        print("Ok, " + avail_nsdist.get(density2Ns) + " exists")
+        if density2Ns != "fixed":
             # Combine output directory
-            if optdirstr:
-                # path = os.path.join(parent_dir, modelfile, nsdist, optdirstr,(str(nsdistargs[0]) + "-" + str(nsdistargs[1]))) 
-                path = os.path.join(parent_dir, modelfile, optdirstr,(str(nsdistargs[0]) + "-" + str(nsdistargs[1]))) 
-            else:
-                # path = os.path.join(parent_dir, modelfile, nsdist, optdirstr,(str(nsdistargs[0]) + "-" + str(nsdistargs[1]))) 
-                path = os.path.join(parent_dir, modelfile, (str(nsdistargs[0]) + "-" + str(nsdistargs[1]))) 
+            path = os.path.join(output_dir, modelname, (str(nsdistargs[0]) + "-" + str(nsdistargs[1]))) 
             # Prapare the headers for each model/Ns simulation
-            header_neutral = "# 4Nmu(intron total length)={t} distribution={nsdist} dist_pars={nsdistargs} n={n} Neutral {sfs} SFS".format(t=thetaNeutral, nsdist=nsdist, nsdistargs=nsdistargs, n=diploidsamplesize, sfs=sfs_format)
-            header_selected = "# 4Nmu(exon total length)={t} distribution={nsdist} dist_pars={nsdistargs} n={n} Selected {sfs} SFS".format(t=thetaSelected,nsdist=nsdist, nsdistargs=nsdistargs, n=diploidsamplesize, sfs=sfs_format)
+            header_neutral = "# 4Nmu(intron total length)={t} distribution={density2Ns} dist_pars={nsdistargs} n={n} Neutral {sfs} SFS".format(t=thetaNeutral, density2Ns=density2Ns, nsdistargs=nsdistargs, n=diploidsamplesize, sfs=sfs_format)
+            header_selected = "# 4Nmu(exon total length)={t} distribution={density2Ns} dist_pars={nsdistargs} n={n} Selected {sfs} SFS".format(t=thetaSelected,density2Ns=density2Ns, nsdistargs=nsdistargs, n=diploidsamplesize, sfs=sfs_format)
         else:
             # Combine output directory
-            if optdirstr:
-                # path = os.path.join(parent_dir, modelfile, nsdist,optdirstr, str(ns)) 
-                path = os.path.join(parent_dir, modelfile, optdirstr, str(ns)) 
-            else:
-                # path = os.path.join(parent_dir, modelfile, nsdist,str(ns)) 
-                path = os.path.join(parent_dir, modelfile, str(ns)) 
+            path = os.path.join(output_dir, modelname, str(ns)) 
 
             # Prapare the headers for each model/Ns simulation
-            header_neutral = "# 4Nmu(intron total length)={t} distribution={nsdist} Ns={ns} n={n} Neutral {sfs} SFS".format(t=thetaNeutral, nsdist=nsdist, ns=ns, n=diploidsamplesize, sfs=sfs_format)
-            header_selected = "# 4Nmu(exon total length)={t} distribution={nsdist} Ns={ns}  n={n} Selected {sfs} SFS".format(t=thetaSelected, nsdist=nsdist, ns=ns, n=diploidsamplesize, sfs=sfs_format)
+            header_neutral = "# 4Nmu(intron total length)={t} distribution={density2Ns} Ns={ns} n={n} Neutral {sfs} SFS".format(t=thetaNeutral, density2Ns=density2Ns, ns=ns, n=diploidsamplesize, sfs=sfs_format)
+            header_selected = "# 4Nmu(exon total length)={t} distribution={density2Ns} Ns={ns}  n={n} Selected {sfs} SFS".format(t=thetaSelected, density2Ns=density2Ns, ns=ns, n=diploidsamplesize, sfs=sfs_format)
 
     else:
-        print("Sorry, Ns distribution " + nsdist + " does not exists!")
+        print("Sorry, Ns distribution " + density2Ns + " does not exists!")
         sys.exit()
 
     # Check if output already exists
@@ -240,7 +220,7 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
         j = 0
         while j < nSeqs:
             # RUN SLiM
-            seed, neutral_sfs, selected_sfs, stderr, stdout = runSlim(simulation=simulation,mu=mu,rec=rec,popSize=popSize,seqLen=seqLen,ns=ns,diploidsamplesize=diploidsamplesize,model=modelfile,nsdist=nsdist,param1=nsdistargs[0],param2=nsdistargs[1],outdir=path,donotcleandir=donotcleandir) 
+            seed, neutral_sfs, selected_sfs, stderr, stdout = runSlim(args,simulation=simulation,mu=mu,rec=rec,popSize=popSize,seqLen=seqLen,ns=ns,diploidsamplesize=diploidsamplesize,modelpath=modelpath,density2Ns=density2Ns,param1=nsdistargs[0],param2=nsdistargs[1],outdir=path,donotcleandir=donotcleandir) 
 
             list_neutral_sfss.append(neutral_sfs)
             list_selected_sfss.append(selected_sfs)
@@ -255,9 +235,10 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
         csfs_ratio = [0 if math.isnan(x) else x for x in csfs_ratio]
         
         # insert 0 to the 0-bin
-        csfs_neutral.insert(0,0) 
-        csfs_selected.insert(0,0) 
-        csfs_ratio.insert(0,0)
+        if args.fill0binSelfrac == None:
+            csfs_neutral.insert(0,0) 
+            csfs_selected.insert(0,0) 
+            csfs_ratio.insert(0,0)
 
         # Write files containing the simulation combined SFS 
         # One SFS for each simulation (that is a aggregation of subsimulations SFS)
@@ -295,7 +276,7 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
             j = 0
             while j < nSeqs:
                 # RUN SLiM
-                seed, neutral_sfs, selected_sfs, stderr, stdout = runSlim(simulation=simulation,mu=mu,rec=rec,popSize=popSize,seqLen=seqLen,ns=ns,diploidsamplesize=diploidsamplesize,modelfile=modelfile,nsdist=nsdist,param1=nsdistargs[0],param2=nsdistargs[1],outdir=path,donotcleandir=donotcleandir) 
+                seed, neutral_sfs, selected_sfs, stderr, stdout = runSlim(args,simulation=simulation,mu=mu,rec=rec,popSize=popSize,seqLen=seqLen,ns=ns,diploidsamplesize=diploidsamplesize,modelpath=modelpath,density2Ns=density2Ns,param1=nsdistargs[0],param2=nsdistargs[1],outdir=path,donotcleandir=donotcleandir) 
 
                 list_neutral_sfss.append(neutral_sfs)
                 list_selected_sfss.append(selected_sfs)
@@ -311,9 +292,10 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
             csfs_ratio = [0 if math.isnan(x) else x for x in csfs_ratio]
             
             # insert 0 to the 0-bin
-            csfs_neutral.insert(0,0)
-            csfs_selected.insert(0,0)
-            csfs_ratio.insert(0,0)
+            if args.fill0binSelfrac == None:
+                csfs_neutral.insert(0,0)
+                csfs_selected.insert(0,0)
+                csfs_ratio.insert(0,0)
             
             # Create a list of outputs (one for each simulation)
             sims_csfs_neutral.append(csfs_neutral)
@@ -336,33 +318,37 @@ def simulateSFSslim(nsimulations = 3, mu = 1e-6/4, rec = 1e-6/4, popSize = 1000,
 # Define the command line arguments
 def parsecommandline():
     parser = argparse.ArgumentParser("python simulate_SFS_withSLiM.py",formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("-a", help="Set the parameters of the chosen distribution",
+                        dest="nsdistargs", nargs= "+", default = [0.0, 0.0], type=float)
+    parser.add_argument("-c",dest="donotcleandir",action="store_true",default=False,help="do not delete temporary sfs files, default is to delete")
+    parser.add_argument("-d", dest="density2Ns", default=None, help="set a distribution, fixed, lognormal, or gamma",required=True)
+    parser.add_argument("-f",dest="foldit",action="store_true",default=False,help="Make folded sfs,  default is unfolded")
+    
+    parser.add_argument("-g", help="Non-synonymous population selection coefficient 2Ns (for fixed values DFE)",
+                        dest="ns",default=0.0, type=float)
+        
+    parser.add_argument("-k", help="Number of slim runs per simulation",
+                        dest="nSeqs", type=int, required=True)
+    parser.add_argument("-L", help="Sequence length",
+                        dest="seqLen", default=10000, type=int)
+    parser.add_argument("-m", help="full path and name of the slim model file,  e.g. 'constant'  for constant.slim",
+                        dest="modelpath", required = True,
+                        type = str)    
+    parser.add_argument("-n", help="Diploid sample size, i.e. half the # of chromosomes",
+                        dest="diploidsamplesize", default=40, type=int)    
+    parser.add_argument("-N", help="Population census size",
+                        dest="popSize", default=1000, type=int)
+    parser.add_argument("-o",help="main supervening output directory (subfolder will be made if needed)",dest="output_dir",required=True)    
     parser.add_argument("-r", help="number of simulations",
                         dest="nsimulations", type=int, required=True)
     parser.add_argument("-R", help="Per site recombination rate per generation",
                         dest="rec", default=1e-6/4, type=float)
+    parser.add_argument("-s", help="Save simulated SFS to a file",
+                        dest="savefile",default = True, type = bool)    
     parser.add_argument("-U", help="Per site mutation rate per generation",
                         dest="mu", default=1e-6/4, type=float)
-    parser.add_argument("-N", help="Population census size",
-                        dest="popSize", default=1000, type=int)
-    parser.add_argument("-L", help="Sequence length",
-                        dest="seqLen", default=10000, type=int)
-    parser.add_argument("-k", help="Number of slim runs per simulation",
-                        dest="nSeqs", type=int, required=True)
-    parser.add_argument("-f",dest="isfolded",action="store_true",default=False,help="Make folded sfs,  default is unfolded")
-    parser.add_argument("-d", dest="nsdist", default=None, help="set a distribution, fixed, lognormal, or gamma")
-    parser.add_argument("-g", help="Non-synonymous population selection coefficient 2Ns (for fixed values DFE)",
-                        dest="ns",default=0.0, type=float)
-    parser.add_argument("-a", help="Set the parameters of the chosen distribution",
-                        dest="nsdistargs", nargs= "+", default = [0.0, 0.0], type=float)
-    parser.add_argument("-n", help="Diploid sample size, i.e. half the # of chromosomes",
-                        dest="diploidsamplesize", default=40, type=int)
-    parser.add_argument("-m", help="name of the slim model file,  e.g. 'constant'  for constant.slim",
-                        dest="modelfile", default="constant", #required = True,
-                        type = str)
-    parser.add_argument("-s", help="Save simulated SFS to a file",
-                        dest="savefile",default = True, type = bool)
-    parser.add_argument("-b",help="optional name of output subdirectory",dest="optdirstr",default = False)
-    parser.add_argument("-c",dest="donotcleandir",action="store_true",default=False,help="do not delete temporary sfs files, default is to delete")
+    parser.add_argument("-x",dest="max2Ns",default = 0.0, help="max of 2Ns when using lognormal or gamma,  e.g. 1")    
+    parser.add_argument("-z",dest="fill0binSelfrac",default = None, type=float,help=" fraction of sequence length that is selected,  used for filling 0 bin. If None, 0 bin is set to zer0 for both Neut and Sel")
     args  =  parser.parse_args(sys.argv[1:])  
     args.commandstring = " ".join(sys.argv[1:])
     return args
@@ -379,20 +365,18 @@ def main(argv):
     ns = args.ns
     nsdistargs = args.nsdistargs
     diploidsamplesize = args.diploidsamplesize
-    modelfile = args.modelfile
+    modelpath = args.modelpath
+    
     nSeqs = args.nSeqs
-    parent_dir = "./slim_work/output"
+    output_dir = args.output_dir
     savefile = args.savefile
-    optdirstr = args.optdirstr
-    if args.nsdist == None:
-        nsdist = modelfile.split(sep="_")[1]
-    else:
-        nsdist = args.nsdist
+    
+    density2Ns = args.density2Ns
 
-    nfsfs, sfsfs, fsfs_ratio, seeds = simulateSFSslim(nsimulations = nsimulations, mu = mu, rec = rec, popSize = popSize, seqLen = seqLen, 
-                                                      ns = ns, nsdist = nsdist, nsdistargs = nsdistargs, diploidsamplesize = diploidsamplesize,isfolded = args.isfolded,
-                                                      modelfile = modelfile, nSeqs = nSeqs, parent_dir = parent_dir, savefile = True,
-                                                      optdirstr=optdirstr,donotcleandir=args.donotcleandir)
+    nfsfs, sfsfs, fsfs_ratio, seeds = simulateSFSslim(args,nsimulations = nsimulations, mu = mu, rec = rec, popSize = popSize, seqLen = seqLen, 
+                                                      ns = ns, density2Ns = density2Ns, nsdistargs = nsdistargs, diploidsamplesize = diploidsamplesize,foldit = args.foldit,
+                                                      modelpath = modelpath, nSeqs = nSeqs, output_dir = output_dir, savefile = True,
+                                                      donotcleandir=args.donotcleandir)
 
     print("Run finished!!!")
 

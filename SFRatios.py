@@ -1,5 +1,5 @@
 """
-Program:  SF_Ratios.py
+Program:  SFRatios.py
 Author: Jody Hey
 
 reads a file with SFSs 
@@ -17,7 +17,7 @@ models (-d) :
 
     model additions: -m (default=0, gamma, lognormal), -t (gamma, lognormal), -y (gamma, lognormal,normal), (-z gamma, lognormal,normal,fixed2Ns) 
 
-usage: SF_Ratios.py [-h] -a SFSFILENAME [-c FIX_THETA_RATIO] [-d DENSITYOF2NS] -f FOLDSTATUS [-g] [-i OPTIMIZETRIES] [-m SETMAX2NS] [-M MAXI] [-p POPLABEL] [-t]
+usage: SFRatios.py [-h] -a SFSFILENAME [-c FIX_THETA_RATIO] [-d DENSITYOF2NS] -f FOLDSTATUS [-g] [-i OPTIMIZETRIES] [-m SETMAX2NS] [-M MAXI] [-p POPLABEL] [-t]
                     [-r OUTDIR] [-u] [-y] [-x] [-z]
 
 options:
@@ -56,7 +56,7 @@ import random
 import time
 import argparse
 import sys
-import SF_Ratios_functions as SRF 
+import SFRatios_functions as SRF 
 from scipy.optimize import OptimizeWarning
 import warnings
 warnings.filterwarnings("ignore", category=OptimizeWarning)
@@ -83,7 +83,7 @@ def stochastic_round(number):
     else:
         return floor_number
 
-def getSFSratios(fn,dofolded,isfolded = False):
+def getSFSratios(fn,dofolded,isfolded = False,dontkeepzeroratios=false): #, binranges=False):
     """
         data text file format: 
             line 1:  arbitrary text
@@ -135,8 +135,10 @@ def getSFSratios(fn,dofolded,isfolded = False):
         neusfs = sfss[0]
         selsfs = sfss[1]
         nc = 2*(len(neusfs) - 1) 
-
-    ratios = [math.inf if  neusfs[j] <= 0.0 else selsfs[j]/neusfs[j] for j in range(len(neusfs))]
+    if dontkeepzeroratios == False:
+        ratios = [math.inf if  neusfs[j] <= 0.0 else selsfs[j]/neusfs[j] for j in range(len(neusfs))]
+    else:
+        ratios = [math.inf if  (neusfs[j] <= 0.0 or selsfs[j] <= 0.0) else selsfs[j]/neusfs[j] for j in range(len(neusfs))]
     thetaNest = sum(neusfs)/sum([1/i for i in range(1,nc )]) # this should work whether or not the sfs is folded 
     thetaSest = sum(selsfs)/sum([1/i for i in range(1,nc )]) # this should work whether or not the sfs is folded 
     # thetaNspace used for integrating over thetaN 
@@ -172,7 +174,7 @@ def buildSFStable(args,paramdic,pm0tempval,pmmasstempval,pmvaltempval,X,headers,
                 tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
     elif args.densityof2Ns=='gamma':
         # params = (paramdic["alpha"],paramdic["beta"])
-        params = (paramdic["shape"],paramdic["mean"])
+        params = (paramdic["mean"],paramdic["shape"])
         if args.estimatemax2Ns:
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],paramdic["max2Ns"],nc ,None,args.dofolded,
                 tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
@@ -244,8 +246,7 @@ def makeresultformatstrings(args):
         resultlabels += ["mu","sigma"]
         resultformatstrs += ["{}\t{:.5g}\t({:.5g} - {:.5g})","{}\t{:.5g}\t({:.5g} - {:.5g})"]
     elif args.densityof2Ns == "gamma":
-        # resultlabels += ["alpha","beta"]
-        resultlabels += ["shape","mean"]
+        resultlabels += ["mean","shape"]
         resultformatstrs += ["{}\t{:.5g}\t({:.5g} - {:.5g})","{}\t{:.5g}\t({:.5g} - {:.5g})"]
     elif args.densityof2Ns == "uni3fixed":
         resultlabels += ["p0","p1"]
@@ -287,8 +288,12 @@ def set_bounds_and_start_possibilities(args,thetaNest,thetaSest,ntrials):
     if not args.fix_theta_ratio:
         if args.estimate_both_thetas == False:
             thetaratioest = thetaSest/thetaNest
-            bounds.append((thetaratioest/20,thetaratioest*20))
-            for sv in startvals: sv.append(random.uniform(thetaratioest/3,thetaratioest*3))
+            if args.thetaratiorange is not None:
+                bounds.append((args.thetaratiorange[0],args.thetaratiorange[1]))
+                for sv in startvals: sv.append(random.uniform(args.thetaratiorange[0],args.thetaratiorange[1]))                
+            else:
+                bounds.append((thetaratioest/20,thetaratioest*20))
+                for sv in startvals: sv.append(random.uniform(thetaratioest/3,thetaratioest*3))
         else:
             bounds.append((thetaNest/30,thetaNest*30))
             for sv in startvals: sv.append(random.uniform(thetaNest/10,thetaNest*10))
@@ -299,11 +304,10 @@ def set_bounds_and_start_possibilities(args,thetaNest,thetaSest,ntrials):
         for sv in startvals: sv.append(random.uniform(0.3,3))
         for sv in startvals: sv.append(random.uniform(0.5,1.5))
     elif args.densityof2Ns =="gamma":
-        bounds += [(0.5,50),(0.00001,10000)]        
-        for sv in startvals: sv.append(random.uniform(1,5))
-        for sv in startvals: sv.append(random.uniform(0.1,2))
+        bounds += [(-10000,0.0),(0.5,10)]        
+        for sv in startvals: sv.append(random.uniform(-10,-1))
+        for sv in startvals: sv.append(random.uniform(0.5,2))
     elif args.densityof2Ns=="normal":
-        # bounds += [(-50,20),(0.1,10)]
         bounds += [(-50,20),(0.1,20)]
         for sv in startvals: sv.append(random.uniform(-15,1))
         for sv in startvals: sv.append(random.uniform(0.2,4))
@@ -318,7 +322,7 @@ def set_bounds_and_start_possibilities(args,thetaNest,thetaSest,ntrials):
         for sv in startvals: sv.append(random.uniform(-100,-2))    #c0
         for sv in startvals: sv.append(random.uniform(-1,5))        #c1
     else:# otherwise density == "fixed2Ns"
-        bounds += [(-1000,1000)]
+        bounds += [(-10000,100)]
         for sv in startvals: sv.append(random.uniform(-10,1))
     if args.estimate_pointmass0:
         bounds += [(0.0,0.5)] # max mass at 0 is 0.5 
@@ -344,10 +348,12 @@ def buildoutpaths(args):
     fnameparts = []
     if args.poplabel != "":
         fnameparts.append(args.poplabel)
-    if "NONSYN" in args.sfsfilename.upper():
+    if "NONSYN" in args.sfsfilename.upper() or "NON-SYN" in args.sfsfilename.upper():
         fnameparts.append("NONSYN")
     elif "SYN" in args.sfsfilename.upper():
         fnameparts.append("SYN")
+    else:
+        fnameparts.append("TYPE_NOT_IN_DATA_FILENAME")
     if args.estimate_both_thetas == False:
         fnameparts.append("Qratio")
     else:
@@ -412,7 +418,7 @@ def writeresults(args,numparams,thetaNest,paramlabels,resultlabels,resultformats
     if args.densityof2Ns == "lognormal":
         expectation,mode,negsd,densityof2Nsadjust,xvals = SRF.getXrange(args.densityof2Ns,(paramdic['mu'],paramdic['sigma']),(paramdic['max2Ns'] if args.estimatemax2Ns else args.setmax2Ns))
     elif args.densityof2Ns == "gamma" :
-        expectation,mode,negsd,densityof2Nsadjust,xvals = SRF.getXrange(args.densityof2Ns,(paramdic['shape'],paramdic['mean']),(paramdic['max2Ns'] if args.estimatemax2Ns else args.setmax2Ns))
+        expectation,mode,negsd,densityof2Nsadjust,xvals = SRF.getXrange(args.densityof2Ns,(paramdic['mean'],paramdic['shape']),(paramdic['max2Ns'] if args.estimatemax2Ns else args.setmax2Ns))
     elif args.densityof2Ns == "uni3fixed":
         expectation = -(11/2)* (-1 + 92*paramdic['p0'] + paramdic['p1'])
         mode = np.nan
@@ -509,6 +515,7 @@ def run(args):
     args.dofolded = args.foldstatus == "isfolded"  or args.foldstatus == "foldit"
 
     #GET RATIO DATA 
+    # datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace = getSFSratios(args.sfsfilename,args.dofolded,isfolded=isfolded,binranges=args.binranges)
     datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace = getSFSratios(args.sfsfilename,args.dofolded,isfolded=isfolded)
     args.nc = nc 
     args.datafileheader = datafileheader
@@ -519,7 +526,7 @@ def run(args):
     # START RESULTS FILE
     outfilename = buildoutpaths(args)
     outf = open(outfilename, "w") # write run info to outfile
-    outf.write("SF_Ratios.py   @Jody Hey 2024\n=============================\n")
+    outf.write("SFRatios.py   @Jody Hey 2024\n=============================\n")
     outf.write("Command line: " + args.commandstring + "\n")
     outf.write("Arguments:\n")
     for key, value in vars(args).items():
@@ -632,7 +639,7 @@ def run(args):
     outf = open(outfilename, "a")
     outf.write("\nCompare data and optimization estimates\n\tEuclidean Distance: {:.4f} RMSE: {:.5f}\n".format(EucDis,RMSE))
     if args.estimate_both_thetas == False:
-        outf.write("\t*Expected counts generated with Wright-Fisher theta estimates (SF_Ratios does not provide theta estimates)\n")
+        outf.write("\t*Expected counts generated with Wright-Fisher theta estimates (SFRatios does not provide theta estimates)\n")
         outf.write("--------------------------------------------------------------------------------------------------------------\n") 
     else:
         outf.write("------------------------------------------------------------------------------------------\n") 
@@ -677,9 +684,15 @@ def parsecommandline():
     parser.add_argument("-t",dest="estimatemax2Ns",default=False,action="store_true",help=" if  -d lognormal or -d gamma,  estimate the maximum 2Ns value") 
     parser.add_argument("-r",dest="outdir",default = "", type=str, help="results directory")    
     parser.add_argument("-u",dest="dualannealopt",default=False,action="store_true",help=" turn on global optimization using dualannealing (runs two opimizations, slow but on average better than basin hopping)") 
+    parser.add_argument("-v",dest="binranges",default=False,action="store_true",help=" sum sfs bins to get neutral (denominator) counts >= 10") 
     parser.add_argument("-y",dest="estimate_pointmass",action="store_true",default=False,help="include a proportion of the mass at some point in the density model, requires normal, lognormal or gamma") 
     parser.add_argument("-x",dest="filecheck",action="store_true",default=False,help=" if true and output file already exists, the run is stopped, else a new numbered output file is made") 
     parser.add_argument("-z",dest="estimate_pointmass0",action="store_true",default=False,help="include a proportion of the mass at zero in the density model")    
+    parser.add_argument("-Q", dest="thetaratiorange", type=float, nargs="+", default=None, help="optional range for thetaratio")
+
+    parser.add_argument("-b",dest="dontkeepzeroratios",action="store_true",default=False,help=" if set, ratio is set to inf if either numerator or denominator is zero") 
+
+
     args  =  parser.parse_args(sys.argv[1:])  
     args.commandstring = " ".join(sys.argv[1:])
 
@@ -746,7 +759,7 @@ if __name__ == '__main__':
         profiler.disable()
         
         # Write full program profile stats
-        prffilename = 'SF_Ratios_stats_{}.prof'.format(args.poplabel)
+        prffilename = 'SFRatios_stats_{}.prof'.format(args.poplabel)
         with open(prffilename, 'w') as f:
             stats = pstats.Stats(profiler, stream=f)
             stats.sort_stats('cumulative')
@@ -754,10 +767,10 @@ if __name__ == '__main__':
         print("profile stats written too {}".format(prffilename))
         
         # Filter and write myptools profile stats
-        prffilename = 'SF_Ratios_functions_stats_{}.prof'.format(args.poplabel)
+        prffilename = 'SFRatios_functions_stats_{}.prof'.format(args.poplabel)
         with open(prffilename, 'w') as f:
             stats = pstats.Stats(profiler, stream=f)
             stats.sort_stats('cumulative')
-            stats.print_stats('SF_Ratios_functions')
-        print("SF_Ratios_functions profile stats written too {}".format(prffilename))
+            stats.print_stats('SFRatios_functions')
+        print("SFRatios_functions profile stats written too {}".format(prffilename))
 

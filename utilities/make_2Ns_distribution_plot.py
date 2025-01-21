@@ -181,10 +181,10 @@ def generate_distribution_plot(data,poplabel,filename,xliml=None,xlimr = None):
         """
         Helper function to plot the main distribution.
         """
-        ax.plot(x, y, label=label, color=color)
-        ax.set_ylabel('Density', fontsize=14)
+        ax.plot(x, y, label=label, color=color,linewidth=4)
+        ax.set_ylabel('Density', fontsize=16)
 
-    def plot_point_mass(ax, height, x_loc=0, width=1, label='Point Mass'):
+    def plot_point_mass(ax, height, x_loc=0, width=2, label='Point Mass'):
         """
         Helper function to plot the point mass as a vertical bar.
         """
@@ -226,7 +226,7 @@ def generate_distribution_plot(data,poplabel,filename,xliml=None,xlimr = None):
 
     # Set up figure and main axis
     fig, ax_main = plt.subplots(figsize=(8, 6))
-    ax_main.set_xlabel('2$N_e s$', fontsize=14, fontstyle='italic')
+    ax_main.set_xlabel('2$N_e s$', fontsize=16, fontstyle='italic')
     if xliml:
         ax_main.set_xlim(left = xliml)
     if xlimr:
@@ -240,7 +240,10 @@ def generate_distribution_plot(data,poplabel,filename,xliml=None,xlimr = None):
 
         x = -x if max2Ns is None else max2Ns - x
     elif data["densityof2Ns"] == 'gamma':
-        alpha, scale = float(data["p1"]),float(data["p2"])
+        mean, shape = float(data["p1"]),float(data["p2"])
+        alpha = shape 
+        scale = beta = -mean/shape
+
         x = np.linspace(50, 1e-5, 1000)
         y = gamma.pdf(x, a=alpha, scale=scale)
         x = -x if max2Ns is None else max2Ns - x
@@ -261,7 +264,7 @@ def generate_distribution_plot(data,poplabel,filename,xliml=None,xlimr = None):
     elif data["densityof2Ns"]=="lognormal":
         infostr = "{}\nLogNormal\n".format(poplabel) + r'$\mu$: {:.3f}'.format(float(data["p1"])) +"\n" + r'$\sigma$: {:.3f}'.format(float(data["p2"])) + "\n" + "Mode: {:.3f}\nMean: {:.3f}".format(float(data["Mode"]),float(data["Mean"]))
     elif data["densityof2Ns"]=="gamma":
-        infostr = "{}\nGamma\n".format(poplabel) + r'$\alpha$: {:.3f}'.format(float(data["p1"])) +"\n" + r'$\beta$: {:.3f}'.format(float(data["p2"])) + "\n" + "Mode: {:.3f}\nMean: {:.3f}".format(float(data["Mode"]),float(data["Mean"]))
+        infostr = "{}\nGamma\n".format(poplabel) + r'mean: {:.3f}'.format(float(data["p1"])) +"\n" + r'shape: {:.3f}'.format(float(data["p2"])) + "\n" + "Mode: {:.3f}".format(float(data["Mode"]),float(data["Mean"]))
     if data["SetMax2Ns"] not in ("None",None):
         infostr += "\nFixed max 2$N_e s$: {}".format(float(data["SetMax2Ns"]))
     elif data["estMax2Ns"]  not in ("None",None):
@@ -275,7 +278,7 @@ def generate_distribution_plot(data,poplabel,filename,xliml=None,xlimr = None):
     infostr += "\nAIC: {:.2f}".format(float(data["AIC"]))
 
 # Adding the text box in the upper left corner of the plot
-    plt.text(0.05, 0.95, infostr, transform=plt.gca().transAxes, fontsize=14, 
+    plt.text(0.05, 0.95, infostr, transform=plt.gca().transAxes, fontsize=16, 
          verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.12))
 
     # Check if we need to plot point mass
@@ -300,9 +303,9 @@ def generate_distribution_plot(data,poplabel,filename,xliml=None,xlimr = None):
             plot_point_mass(ax_main, point_height, x_loc=point_location, width=1)
 
     # Setting the x and y axis labels with the specified formatting
-    # plt.xlabel(r'$\textit{2Ns}$', fontsize=14, fontstyle='italic')
-    plt.xlabel('2$N_e s$', fontsize=14, fontstyle='italic')
-    plt.ylabel('Probability', fontsize=14)
+    # plt.xlabel(r'$\textit{2Ns}$', fontsize=16, fontstyle='italic')
+    plt.xlabel('2$N_e s$', fontsize=16, fontstyle='italic')
+    plt.ylabel('Probability', fontsize=16)
     plt.savefig(filename, format='png')
     plt.close()
 

@@ -1,5 +1,5 @@
 """
-reads output from one more output files from SF_Ratios.py  
+reads output from one more output files from SFRatios.py  
 generates a csv file with one row for each file 
 reports runtime terms, data set stuff, parameter estimates, etc etc
 usage: get_SF_Ratio_output_summaries.py [-h] -d FILEDIRECTORY -f OUTFILENAME [-p POPLABEL] [-x SKIPFILESTRING]
@@ -84,6 +84,8 @@ def parse_file(filepath,headers):
             data["nc"] = int(lines[li].split(":")[1].strip())
         if "foldstatus:" in lines[li]:
             data["FoldStatus"] = lines[li].split(":")[1].strip()
+        if "thetaratiorange"  in lines[li]: 
+            data["thetaRatiorange"] = lines[li].split(":")[1].strip()
         if "optimizetries:" in lines[li] and int(lines[li].split(":")[1].strip()) > 0:
             data["OptMethods"] += "," if len(data["OptMethods"]) > 0 else ""
             data["OptMethods"] += "reg{}".format(lines[li].split(":")[1].strip())
@@ -217,7 +219,7 @@ def run(args):
     headers = [
         "File","fileMtime","RunTime","FoldStatus","OptMethods","BestOptMethod","nc","IntCheck","NonS/Syn", "Density", "SetMax2Ns", "FixQR","FixMode0", "PMmode","numparams",
         "Lklhd","AIC","Mean", "Qratio","Qratio_CI", "p1","p1_CI", "p2","p2_CI","estMax2Ns","estMax2Ns_CI",
-        "pm0_mass","pm0_mass_CI","pm_mass","pm_mass_CI","pm_val","pm_val_CI","Mode", "EucDis","RMSE"
+        "pm0_mass","pm0_mass_CI","pm_mass","pm_mass_CI","pm_val","pm_val_CI","Mode", "EucDis","RMSE","thetaRatiorange"
         ]
     if args.poplabel is not None:
         headers.insert(0,"dataset")

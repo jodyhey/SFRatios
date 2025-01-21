@@ -5,7 +5,7 @@ distributions of counts for a series of bins, where the bins are indexed from 1 
 is greater than the area under the curve for a second cumulative distribution that is 
 also of discrete counts for bins 1 thru k.   The total counts are different,  so the test must account for this.
 Does a one-sided test that the second SFS has greater AUC than the first. 
-Reads an SF_Ratios.py input file, i.e. text on line 1,  neutral SFS on line 2 and selected SFS on line 3. Ignore the 0 bin. 
+Reads an SFRatios.py input file, i.e. text on line 1,  neutral SFS on line 2 and selected SFS on line 3. Ignore the 0 bin. 
 
 """
 import numpy as np
