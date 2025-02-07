@@ -1,18 +1,21 @@
 """
-written by claude with this prompt:
+written by claude and chatgpt with this prompt:
 I need to do a test of a hypothesis that the area under the curve of one cumulative 
 distributions of counts for a series of bins, where the bins are indexed from 1 to k, 
 is greater than the area under the curve for a second cumulative distribution that is 
 also of discrete counts for bins 1 thru k.   The total counts are different,  so the test must account for this.
 Does a one-sided test that the second SFS has greater AUC than the first. 
 Reads an SFRatios.py input file, i.e. text on line 1,  neutral SFS on line 2 and selected SFS on line 3. Ignore the 0 bin. 
-
+and later:
+    "please modify this code to add an option for a two-sided test.  Also make the testing function callable  from another program that imports this. and passes SFSs as lists of values, with necessary options for one sided and two sided tests "
 """
+
 import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 import argparse
 import sys
+
 
 def getSFSs(fn):
     """
@@ -60,48 +63,87 @@ def area_between_cdfs(cdf1, cdf2):
     total_area = np.trapz(np.abs(diff))
     return positive_area, total_area
 
-def test_cdf_dominance(counts1, counts2, n_permutations=10000):
+def test_cdf_dominance(counts1, counts2, n_permutations=10000, alternative='greater'):
     """
-    Test whether CDF1 is significantly greater than CDF2
-    Uses permutation test approach
+    counts1 and counts2 are SFSs starting at bin 1.  
+    Perform a Kolmogorov-Smirnov-like test for comparing two CDFs.
+    Supports both one-sided and two-sided tests.
+    if "greater" test whether cdf(counts1) > cdf(counts2)
     
     Parameters:
-    counts1, counts2: arrays of counts for each bin
+    counts1, counts2: lists of counts for each bin
     n_permutations: number of permutations for the test
+    alternative: 'greater' for one-sided (cdf1 > cdf2), 'two-sided' for any difference
     
     Returns:
-    pvalue: p-value for the test
-    observed_stat: observed area where cdf1 > cdf2
-    null_stats: distribution of test statistics under null
+    p-value, observed statistic, null statistics
     """
-    # Convert to CDFs
     cdf1 = compute_normalized_cdf(counts1)
     cdf2 = compute_normalized_cdf(counts2)
+    observed_stat, total_area = area_between_cdfs(cdf1, cdf2)
     
-    # Calculate observed statistic (area where cdf1 > cdf2)
-    observed_stat, _ = area_between_cdfs(cdf1, cdf2)
-    
-    # Combine data for permutation test
     combined = np.concatenate([counts1, counts2])
     n1, n2 = len(counts1), len(counts2)
     
-    # Permutation test
     null_stats = np.zeros(n_permutations)
     for i in range(n_permutations):
-        # Randomly permute the combined data
         permuted = np.random.permutation(combined)
-        # Split into two groups of original sizes
         perm1, perm2 = permuted[:n1], permuted[n1:]
-        # Calculate CDFs
         perm_cdf1 = compute_normalized_cdf(perm1)
         perm_cdf2 = compute_normalized_cdf(perm2)
-        # Calculate test statistic
         null_stats[i], _ = area_between_cdfs(perm_cdf1, perm_cdf2)
     
-    # Calculate p-value (proportion of permuted stats >= observed)
-    pvalue = np.mean(null_stats >= observed_stat)
+    if alternative == 'greater':
+        p_value = np.mean(null_stats >= observed_stat)
+    elif alternative == 'two-sided':
+        p_value = np.mean(null_stats >= total_area)
+    else:
+        raise ValueError("alternative must be 'greater' or 'two-sided'")
     
-    return pvalue, observed_stat, null_stats
+    return p_value, observed_stat, null_stats
+
+# def test_cdf_dominance(counts1, counts2, n_permutations=10000):
+#     """
+#     Test whether CDF1 is significantly greater than CDF2
+#     Uses permutation test approach
+    
+#     Parameters:
+#     counts1, counts2: arrays of counts for each bin
+#     n_permutations: number of permutations for the test
+    
+#     Returns:
+#     pvalue: p-value for the test
+#     observed_stat: observed area where cdf1 > cdf2
+#     null_stats: distribution of test statistics under null
+#     """
+#     # Convert to CDFs
+#     cdf1 = compute_normalized_cdf(counts1)
+#     cdf2 = compute_normalized_cdf(counts2)
+    
+#     # Calculate observed statistic (area where cdf1 > cdf2)
+#     observed_stat, _ = area_between_cdfs(cdf1, cdf2)
+    
+#     # Combine data for permutation test
+#     combined = np.concatenate([counts1, counts2])
+#     n1, n2 = len(counts1), len(counts2)
+    
+#     # Permutation test
+#     null_stats = np.zeros(n_permutations)
+#     for i in range(n_permutations):
+#         # Randomly permute the combined data
+#         permuted = np.random.permutation(combined)
+#         # Split into two groups of original sizes
+#         perm1, perm2 = permuted[:n1], permuted[n1:]
+#         # Calculate CDFs
+#         perm_cdf1 = compute_normalized_cdf(perm1)
+#         perm_cdf2 = compute_normalized_cdf(perm2)
+#         # Calculate test statistic
+#         null_stats[i], _ = area_between_cdfs(perm_cdf1, perm_cdf2)
+    
+#     # Calculate p-value (proportion of permuted stats >= observed)
+#     pvalue = np.mean(null_stats >= observed_stat)
+    
+#     return pvalue, observed_stat, null_stats
 
 def plot_cdfs_comparison(counts1, counts2, title="Comparison of CDFs"):
     """
@@ -143,8 +185,9 @@ def parsecommandline():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-f", dest="sfsfilename",required=True,type = str, help="Path for SFS file")
-    parser.add_argument("-l",dest="label",default = "", type=str, help="putput file label")    
+    parser.add_argument("-l",dest="label",default = "", type=str, help="putput file label")  
     parser.add_argument("-o",dest="outdir",default = "", type=str, help="output directory")    
+    parser.add_argument("-t",dest="twosided",default = False, action="store_true",help="two a two sided test, default is one sided with first SFS being selected candidated and second being neutral candidate")
     args  =  parser.parse_args(sys.argv[1:]) 
     return args 
 # Example usage:
@@ -156,7 +199,7 @@ if __name__ == "__main__":
     # counts2 = np.array([8, 15, 18, 12, 7])
     
     # Run test
-    pvalue, observed_stat, null_stats = test_cdf_dominance(Ncounts, Scounts)
+    pvalue, observed_stat, null_stats = test_cdf_dominance(Ncounts, Scounts, alternative = "greater" if args.twosided is False else None)
     
     # Print results
     print(f"Observed area where SCDF > NCDF2: {observed_stat:.4f}")

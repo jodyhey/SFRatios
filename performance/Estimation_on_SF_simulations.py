@@ -160,15 +160,15 @@ def runROC(args):
             if usethetaratio:
                 thetaratiostart = thetaS/thetaN
                 ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaratio,
-                    np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,None,args.thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
+                    np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,None,args.thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
                 ratiothetag0result = minimize_scalar(SRF.NegL_SFSRATIO_estimate_thetaratio,
-                    bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,None,args.thetaNspace,ratios),method='Brent')   
+                    bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,None,args.thetaNspace,ratios),method='Brent')   
             else:
                 thetastart = thetaN
                 ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
-                    np.array([thetastart,thetastart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
+                    np.array([thetastart,thetastart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
                 ratiothetag0result =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
-                    np.array([thetastart,thetastart]),args=(n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10)])                    
+                    np.array([thetastart,thetastart]),args=(n,dofolded,includemisspec,"fix2Ns0",False,None,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10)])                    
             thetagdelta = 2*(-ratiothetagresult.fun + ratiothetag0result.fun)
             for t in x2thresholds:
                 if thetagdelta > t:
@@ -278,14 +278,14 @@ def runpower(args):
                 if usethetaratio:
                     thetaratiostart = thetaS/thetaN
                     ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaratio,
-                        np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,None,thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
+                        np.array([thetaratiostart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,None,thetaNspace,ratios),method="Powell",bounds=[(thetaratiostart/10,thetaratiostart*10),(10*gstart,-10*gstart)])
                     ratiothetag0result = minimize_scalar(SRF.NegL_SFSRATIO_estimate_thetaratio,
-                        bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,None,thetaNspace,ratios),method='Brent')   
+                        bracket=(thetaratiostart/10,thetaratiostart*10),args = (n,dofolded,includemisspec,"fix2Ns0",False,None,False,None,thetaNspace,ratios),method='Brent')   
                 else:
                     ratiothetagresult =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
-                        np.array([thetastart,thetastart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
+                        np.array([thetastart,thetastart,gstart]),args=(n,dofolded,includemisspec,"fixed2Ns",False,None,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10),(10*gstart,-10*gstart)])
                     ratiothetag0result =  minimize(SRF.NegL_SFSRATIO_estimate_thetaS_thetaN,
-                        np.array([thetastart,thetastart]),args=(n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10)])                                        
+                        np.array([thetastart,thetastart]),args=(n,dofolded,includemisspec,"fix2Ns0",False,None,False,False,ratios),method="Powell",bounds=[(thetastart/10,thetastart*10),(thetastart/10,thetastart*10)])                                        
                 thetagdelta = 2*(-ratiothetagresult.fun + ratiothetag0result.fun)
                 for ti,t in enumerate(x2thresholds):
                     if thetagdelta > t:

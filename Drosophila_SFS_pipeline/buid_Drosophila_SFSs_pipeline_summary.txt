@@ -1,0 +1,20 @@
+process vcf files as described in the manuscript
+get the chromosome sizes using 
+		 wget https://hgdownload.soe.ucsc.edu/goldenPath/dm6/bigZips/dm6.chrom.sizes
+Building short intron bed file
+	get file of cds starts and ends from ucsc table browser for dm6 refseq
+	run Extract_merge_coding_introns_from_gene_table.py 
+		returns dm6_all_introns.bed
+	
+	remove identical introns and merge others
+		bedtools sort -i dm6_all_introns.bed | \
+		bedtools merge -s -c 6 -o distinct > dm6_merged_introns.bed
+	remove longer introns and trim the splice sites
+		bedtools sort -i dm6_merged_introns.bed | \
+		bedtools merge -i stdin | \
+		awk 'BEGIN{OFS="\t"} {if($3-$2 <= 85) print $0}' | \
+		bedtools slop -i stdin -g dm6.chrom.sizes -b -3 > dm6_short_trimmed_introns.bed
+make file of paired short inton and coding region SNP allele counts
+	get_short_intron_paired_SNP_allele_counts.py
+make SFSs
+	make_SFS_from_SNP_paired_allele_counts.py

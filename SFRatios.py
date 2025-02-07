@@ -15,28 +15,26 @@ models (-d) :
     lognormal : flipped lognormal distribution,  max set by -m  (e.g. 0 or 1), or estimated (-t)
     normal : regular gaussian 
 
-    model additions: -m (default=0, gamma, lognormal), -t (gamma, lognormal), -y (gamma, lognormal,normal), (-z gamma, lognormal,normal,fixed2Ns) 
+    model additions: -m (default=0, gamma, lognormal), -t (gamma, lognormal), (-z gamma, lognormal,normal,fixed2Ns) 
 
-usage: SFRatios.py [-h] -a SFSFILENAME [-c FIX_THETA_RATIO] [-d DENSITYOF2NS] -f FOLDSTATUS [-g] [-i OPTIMIZETRIES] [-m SETMAX2NS] [-M MAXI] [-p POPLABEL] [-t]
-                    [-r OUTDIR] [-u] [-y] [-x] [-z]
+usage: SFRatios.py [-h] -a SFSFILENAME [-c FIX_THETA_RATIO] [-d DENSITYOF2NS] [-g] -f FOLDSTATUS [-m SETMAX2NS] [-M MAXI] [-p POPLABEL] [-t] [-r OUTDIR] [-x] [-z] [-Q THETARATIORANGE [THETARATIORANGE ...]]
 
 options:
-  -h, --help          show this help message and exit
-  -a SFSFILENAME      Path for SFS file
-  -c FIX_THETA_RATIO  set the fixed value of thetaS/thetaN
-  -d DENSITYOF2NS     gamma, lognormal, normal, fixed2Ns
-  -f FOLDSTATUS       usage regarding folded or unfolded SFS distribution, 'isfolded', 'foldit' or 'unfolded'
-  -g                  turn on global optimization using basinhopping (very slow, often finds better optimum)
-  -i OPTIMIZETRIES    run the regular scipy minimize optimizer # times, relatively fast but not as good as -u or -g
-  -m SETMAX2NS        optional setting for 2Ns maximum, default = 0, use with -d lognormal or -d gamma
-  -M MAXI             the maximum bin index to include in the calculations, default=None
-  -p POPLABEL         a population name or other label for the output filename and for the chart
-  -t                  if -d lognormal or -d gamma, estimate the maximum 2Ns value
-  -r OUTDIR           results directory
-  -u                  turn on global optimization using dualannealing (slow, often finds better optimum)
-  -y                  include a proportion of the mass at some point in the density model, requires normal, lognormal or gamma
-  -x                  if true and output file already exists, the run is stopped, else a new numbered output file is made
-  -z                  include a proportion of the mass at zero in the density model
+  -h, --help            show this help message and exit
+  -a SFSFILENAME        Path for SFS file
+  -c FIX_THETA_RATIO    set the fixed value of thetaS/thetaN (i.e. mutation rate ratio)
+  -d DENSITYOF2NS       gamma, lognormal, normal, fixed2Ns
+  -g                    turn on optimization using basinhopping and dualannealing (very slow, often finds better optimum)
+  -f FOLDSTATUS         usage regarding folded or unfolded SFS distribution, 'isfolded', 'foldit' or 'unfolded'
+  -m SETMAX2NS          optional setting for 2Ns maximum, default = 0, use with -d lognormal or -d gamma
+  -M MAXI               the maximum bin index to include in the calculations, default=None
+  -p POPLABEL           a population name and/or data type or other label for the start of the output filename
+  -t                    if -d lognormal or -d gamma, estimate the maximum 2Ns value
+  -r OUTDIR             results directory
+  -x                    if true and output file already exists, the run is stopped, else a new numbered output file is made
+  -z                    include a proportion of the mass at zero in the density model
+  -Q THETARATIORANGE [THETARATIORANGE ...]
+                        optional range for thetaratio (i.e. mutation rate ratio), low end followed by high end
     
 deprecated models and options (accessible by setting ):
     uni3fixed : uniform in each of 3 intervals  ((-1000,-1),(-1,1),(1,10)), parameters are the proportions in the two left bins  (right bin is 1- sum of those proportions)
@@ -67,6 +65,8 @@ starttime = time.time()
 #fix random seeds to make runs with identical settings repeatable 
 random.seed(1) 
 np.random.seed(2) 
+defaultnumberofbasicoptimizatinos = 3
+kluge_likelihood_difference_bug_patch = 10 
 
 deprecated_options_OFF = True # use this to turn off obscure options not for the release of this program. 
 # deprecated_options_OFF  = False # set to False to turn obscure options and debug 
@@ -83,7 +83,7 @@ def stochastic_round(number):
     else:
         return floor_number
 
-def getSFSratios(fn,dofolded,isfolded = False,dontkeepzeroratios=false): #, binranges=False):
+def getSFSratios(fn,dofolded,isfolded = False,dontkeepzeroratios=False): 
     """
         data text file format: 
             line 1:  arbitrary text
@@ -109,8 +109,6 @@ def getSFSratios(fn,dofolded,isfolded = False,dontkeepzeroratios=false): #, binr
     sfss = []
     for line in [lines[1],lines[3]]: # neutral, skip a line, then selected 
         if "." in line:
-            # vals = list(map(float,line.strip().split()))
-            # sfs = list(map(stochastic_round,vals))
             sfs = list(map(float,line.strip().split()))
         else:
             sfs = list(map(int,line.strip().split()))
@@ -157,46 +155,50 @@ def update_table(X, headers, new_data, new_labels):
         X[i].extend(formatted_row)
     return X, headers
 
-def buildSFStable(args,paramdic,pm0tempval,pmmasstempval,pmvaltempval,X,headers,nc):
-    """
-        generates expected values using estimated parameters
-        calls update_table()
-    """
+def calcexpectedSFS(args,paramdic,pm0tempval,nc):
     tempthetaratio = paramdic['thetaratio'] if args.estimate_both_thetas == False else None
     tempmisspec = None if args.includemisspec==False else paramdic["misspec"]
     if args.densityof2Ns=="lognormal":
         params = (paramdic["mu"],paramdic["sigma"])
         if args.estimatemax2Ns:   
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],paramdic["max2Ns"],nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
+                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio)
         else:
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],args.setmax2Ns,nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
+                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio)
     elif args.densityof2Ns=='gamma':
         # params = (paramdic["alpha"],paramdic["beta"])
         params = (paramdic["mean"],paramdic["shape"])
         if args.estimatemax2Ns:
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],paramdic["max2Ns"],nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
+                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)
         else:
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],args.setmax2Ns,nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
+                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)
     elif args.densityof2Ns=="normal":
         params = (paramdic["mu"],paramdic["sigma"])
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)
     elif args.densityof2Ns == "uni3fixed":
         params = (paramdic["p0"],paramdic["p1"])
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)                
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)                
     elif args.densityof2Ns == "uni3float":
         params = (paramdic["p0"],paramdic["p1"],paramdic["c0"],paramdic["c1"])
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)                
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)                
     elif args.densityof2Ns =="fixed2Ns":
         params = (paramdic["2Ns"],)
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio, pmmass = pmmasstempval,pmval = pmvaltempval)
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)    
+    return neusfs,selsfs,ratios
+
+def buildSFStable(args,paramdic,pm0tempval,pmmasstempval,pmvaltempval,X,headers,nc):
+    """
+        generates expected values using estimated parameters
+        calls update_table()
+    """
+    neusfs,selsfs,ratios = calcexpectedSFS(args,paramdic,pm0tempval,nc)
     if args.estimate_both_thetas == False:
         X, headers = update_table(X, headers,[neusfs,selsfs,ratios], ["Fit*_N","Fit*_S","Fit_Ratio"])
     else:
@@ -260,11 +262,6 @@ def makeresultformatstrings(args):
     if args.estimate_pointmass0:
         resultlabels += ["pm0"]
         resultformatstrs += ["{}\t{:.5g}\t({:.5g} - {:.5g})"]
-    if args.estimate_pointmass:
-        resultlabels += ["pm_mass"]
-        resultformatstrs += ["{}\t{:.5g}\t({:.5g} - {:.5g})"]
-        resultlabels += ["pm_val"]
-        resultformatstrs += ["{}\t{:.5g}\t({:.5g} - {:.5g})"]
     if args.estimatemax2Ns:
         resultlabels += ["max2Ns"]
         resultformatstrs += ["{}\t{:.5g}\t({:.5g} - {:.5g})"]
@@ -327,10 +324,6 @@ def set_bounds_and_start_possibilities(args,thetaNest,thetaSest,ntrials):
     if args.estimate_pointmass0:
         bounds += [(0.0,0.5)] # max mass at 0 is 0.5 
         for sv in startvals: sv.append(random.uniform(0.01,0.49))
-    if args.estimate_pointmass:
-        bounds += [(0.0,0.5),(-20.0, 20.0)]        # max mass is 0.5,  location between -20 and 20 
-        for sv in startvals: sv.append(random.uniform(0.01,0.49))
-        for sv in startvals: sv.append(random.uniform(-5,1))
     if args.estimatemax2Ns:
         bounds += [(-20.0,20.0)]
         for sv in startvals: sv.append(random.uniform(-5,1))
@@ -348,12 +341,6 @@ def buildoutpaths(args):
     fnameparts = []
     if args.poplabel != "":
         fnameparts.append(args.poplabel)
-    if "NONSYN" in args.sfsfilename.upper() or "NON-SYN" in args.sfsfilename.upper():
-        fnameparts.append("NONSYN")
-    elif "SYN" in args.sfsfilename.upper():
-        fnameparts.append("SYN")
-    else:
-        fnameparts.append("TYPE_NOT_IN_DATA_FILENAME")
     if args.estimate_both_thetas == False:
         fnameparts.append("Qratio")
     else:
@@ -368,10 +355,6 @@ def buildoutpaths(args):
         fnameparts.append("FXQR{}".format(args.fix_theta_ratio))
     if args.estimate_pointmass0:
         fnameparts.append("PM0")
-    if args.estimate_pointmass:
-        fnameparts.append("PM")
-    if args.fixmode0:
-        fnameparts.append("FXM0")
     if args.includemisspec:
         fnameparts.append("MS")
     fnamebase = "_".join(fnameparts)
@@ -389,29 +372,22 @@ def countparameters(args):
     numparams += 2 if args.densityof2Ns in ("normal","lognormal","gamma","uni3fixed") else (1 if args.densityof2Ns=="fixed2Ns" else (4 if args.densityof2Ns=="uni3float" else 0))
     numparams += 1 if args.estimatemax2Ns else 0 
     numparams += 1 if args.estimate_pointmass0 else 0 
-    numparams += 2 if args.estimate_pointmass else 0 
     numparams += 1 if args.includemisspec else 0
     return numparams    
 
-def writeresults(args,numparams,thetaNest,paramlabels,resultlabels,resultformatstrs,resultx,likelihood,confidence_intervals,outfilename,message):
-    """
-    """
+def makeparamdic(args,paramlabels,resultx,thetaNest):
     paramdic = dict(zip(paramlabels,resultx))
     if args.estimate_both_thetas == False:
         paramdic['thetaN']=thetaNest
         if args.fix_theta_ratio is not None:
             paramdic["thetaratio"] = args.fix_theta_ratio
         paramdic['thetaS'] = paramdic["thetaratio"]*thetaNest
-    # if args.fixmode0: not used in awhile 12/4/2024
-    #     if args.densityof2Ns=="lognormal":
-    #         args.setmax2Ns = math.exp(paramdic['mu'] - pow(paramdic['sigma'],2))
-    #     if args.densityof2Ns=="gamma":
-    #         # if paramdic['alpha'] < 1:
-    #         if paramdic['shape'] < 1:
-    #             args.setmax2Ns = 0.0
-    #         else:
-    #             args.setmax2Ns =  (paramdic['alpha'] - 1)*paramdic['beta']
-    #             args.setmax2Ns =  (paramdic['alpha'] - 1)*paramdic['beta']
+    return paramdic
+
+def writeresults(args,numparams,thetaNest,paramlabels,resultlabels,resultformatstrs,resultx,likelihood,confidence_intervals,outfilename,message):
+    """
+    """
+    paramdic = makeparamdic(args,paramlabels,resultx,thetaNest)
     #get expectation
     pm0tempval = pmmasstempval = pmvaltempval = None
     densityof2Nsadjust = None
@@ -432,10 +408,6 @@ def writeresults(args,numparams,thetaNest,paramlabels,resultlabels,resultformats
     if args.estimate_pointmass0:
         expectation *= (1-paramdic['pm0'])
         pm0tempval = paramdic['pm0']
-    elif args.estimate_pointmass:
-        expectation =  expectation * (1-paramdic['pm_mass']) + paramdic['pm_mass'] * paramdic['pm_val']
-        pmmasstempval = paramdic['pm_mass']
-        pmvaltempval = paramdic['pm_val']
     AIC = 2*numparams - 2*likelihood
     paramwritestr = ["AIC\t{:.3f}".format(AIC)] 
     paramwritestr+=[resultformatstrs[0].format(resultlabels[0],likelihood)]
@@ -499,13 +471,19 @@ def generate_confidence_intervals(func,p_est, arglist, maxLL,bounds,alpha=0.05):
 def calcdistances(X):
     """
         calculate distances between observed and expected ratio lists
+        X can be a table built for output or a list of two lists of ratios
     """
     sumsq = 0.0
     c = 0
-    for i,row in enumerate(X):
-        if i > 0:
-            c += 1
-            sumsq += pow(float(row[5]) -float(row[2]),2)
+    if len(X)==2:
+        for i in range(1,len(X[0])):
+            c+=1
+            sumsq += pow(X[0][i] - X[1][i],2)
+    else:
+        for i,row in enumerate(X):
+            if i > 0:
+                c += 1
+                sumsq += pow(float(row[5]) -float(row[2]),2)
     RMSE = math.sqrt(sumsq/c)
     EucDis = math.sqrt(sumsq)
     return EucDis,RMSE
@@ -515,7 +493,6 @@ def run(args):
     args.dofolded = args.foldstatus == "isfolded"  or args.foldstatus == "foldit"
 
     #GET RATIO DATA 
-    # datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace = getSFSratios(args.sfsfilename,args.dofolded,isfolded=isfolded,binranges=args.binranges)
     datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace = getSFSratios(args.sfsfilename,args.dofolded,isfolded=isfolded)
     args.nc = nc 
     args.datafileheader = datafileheader
@@ -543,34 +520,31 @@ def run(args):
     boundsarray,startvals = set_bounds_and_start_possibilities(args,thetaNest,thetaSest,args.optimizetries)
     if args.estimate_both_thetas == False:
         func = SRF.NegL_SFSRATIO_estimate_thetaratio
-        arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,args.fix_theta_ratio,args.setmax2Ns,args.estimate_pointmass,args.estimate_pointmass0,args.fixmode0,args.maxi,thetaNspace,ratios)
+        arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,args.fix_theta_ratio,args.setmax2Ns,args.estimate_pointmass0,args.maxi,thetaNspace,ratios)
+                            # p,nc,dofolded,includemisspec,densityof2Ns,fix_theta_ratio,max2Ns,estimate_pointmass0,maxi,thetaNspace,zvals): 
     else:
         func = SRF.NegL_SFSRATIO_estimate_thetaS_thetaN
-        arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,False,args.setmax2Ns,args.estimate_pointmass,args.estimate_pointmass0,args.maxi,args.fixmode0,ratios)     
+        arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,False,args.setmax2Ns,args.estimate_pointmass0,args.maxi,ratios)     
 
     #RUN MINIMIZE TRIALS
     outf = open(outfilename, "a")
-    outf.write("trial\tlikelihood\t" + "\t".join(paramlabels) + "\toptimizer_message\n") # table header for basic optimization results 
     for ii in range(args.optimizetries):
         if ii == 0:
             resvals = []
             rfunvals = []
         startarray = startvals[ii]
         result = minimize(func,np.array(startarray),args=arglist,bounds = boundsarray,method=args.local_optimize_method,options={"disp":False,"maxiter":1000*4})    
-        # result = OptimizeResult(x=[1.3276,0.3,0.3,-100,-5],fun=-1105,message = "debugging")
         resvals.append(result)
         rfunvals.append(-result.fun)
-        outf.write("{}\t{:.5f}\t{}\t{}\n".format(ii,-result.fun," ".join(f"{num:.5e}" for num in result.x),result.message))
     outf.close()
-    if args.optimizetries > 0:
-        besti = rfunvals.index(max(rfunvals))
-        OPTresult = resvals[besti]
-        OPTlikelihood = rfunvals[besti]
-    else:
-        OPTlikelihood = -np.inf
-        OPTresult = None
+    besti = rfunvals.index(max(rfunvals))
+    OPTresult = resvals[besti]
+    OPTlikelihood = rfunvals[besti]
+    paramdic = makeparamdic(args,paramlabels,OPTresult.x,thetaNest)
+    neuSFS,selSFS,expratios = calcexpectedSFS(args,paramdic,None if 'pm0' not in paramdic else paramdic['pm0'],nc)
+    opteucdis,optRMSE = calcdistances([ratios,expratios])
     #basinhopping
-    if args.basinhoppingopt:
+    if args.moreoptimization:
         if args.optimizetries>0:
             startarray = startvals[besti] # start at the best value found previously,  is this helpful ? works better than an arbitrary start value 
         else:
@@ -586,50 +560,58 @@ def run(args):
         try:
             BHresult = basinhopping(func,np.array(startarray),T=10.0,
                                     minimizer_kwargs={"method":args.local_optimize_method,"bounds":boundsarray,"args":tuple(arglist)})
-            # BHresult = OptimizeResult(x=[7.5858,10.0,4.2989,0.03835,-0.99699],fun=-1279.792,message = "debugging")
             BHlikelihood = -BHresult.fun
-            outf = open(outfilename, "a")
-            outf.write("BH\t{:.5f}\t{}\t{}\n".format(BHlikelihood," ".join(f"{num:.5e}" for num in BHresult.x),BHresult.message))
-            outf.close()
+            paramdic = makeparamdic(args,paramlabels,BHresult.x,thetaNest)
+            neuSFS,selSFS,expratios = calcexpectedSFS(args,paramdic,None if 'pm0' not in paramdic else paramdic['pm0'],nc)
+            BHeucdis,BHRMSE = calcdistances([ratios,expratios])
         except Exception as e:
             BHlikelihood = -np.inf
+            BHresult = None
             outf = open(outfilename, "a")
             outf.write("\nbasinhopping failed with message : {}\n".format(e))
             outf.close()
+        if (BHlikelihood - OPTlikelihood > kluge_likelihood_difference_bug_patch and BHeucdis > opteucdis): #BH seems not to have worked
+            BHlikelihood = -np.inf
+            BHresult = None
     else:
         BHlikelihood = -np.inf
         BHresult = None
     #dualanneal - use two starting temperatures, default and 20000
-    if args.dualannealopt:
+    if args.moreoptimization:
         try:
-            DAresult1 = dual_annealing(func, boundsarray, args=tuple(arglist))
-            DAlikelihood1 = -DAresult1.fun
-            outf = open(outfilename, "a")
-            outf.write("DA1\t{:.5f}\t{}\t{}\n".format(DAlikelihood1," ".join(f"{num:.5e}" for num in DAresult1.x),DAresult1.message))
-            outf.close()
+            DA1result = dual_annealing(func, boundsarray, args=tuple(arglist))
+            DA1likelihood = -DA1result.fun
+            paramdic = makeparamdic(args,paramlabels,DA1result.x,thetaNest)
+            neuSFS,selSFS,expratios = calcexpectedSFS(args,paramdic,None if 'pm0' not in paramdic else paramdic['pm0'],nc)
+            DA1eucdis,DA1RMSE = calcdistances([ratios,expratios])
+            if (DA1likelihood - OPTlikelihood > kluge_likelihood_difference_bug_patch and DA1eucdis > opteucdis): #DA1 seems not to have worked
+                DA1likelihood = -np.inf
+                DA1result = None
         except Exception as e:
-            DAlikelihood1 = -np.inf
+            DA1likelihood = -np.inf
+            DA1result = None
             outf = open(outfilename, "a")
             outf.write("\ndualannealing1 failed with message : {}\n".format(e))
             outf.close()
         try:
-            DAresult2 = dual_annealing(func, boundsarray, args=tuple(arglist),initial_temp=20000.0)
-            DAlikelihood2 = -DAresult2.fun
-            outf = open(outfilename, "a")
-            outf.write("DA2\t{:.5f}\t{}\t{}\n".format(DAlikelihood2," ".join(f"{num:.5e}" for num in DAresult2.x),DAresult2.message))
-            outf.close()
+            DA2result = dual_annealing(func, boundsarray, args=tuple(arglist),initial_temp=20000.0)
+            DA2likelihood = -DA2result.fun
+            paramdic = makeparamdic(args,paramlabels,DA2result.x,thetaNest)
+            neuSFS,selSFS,expratios = calcexpectedSFS(args,paramdic,None if 'pm0' not in paramdic else paramdic['pm0'],nc)
+            DA2eucdis,DA2RMSE = calcdistances([ratios,expratios])
+            if (DA2likelihood - OPTlikelihood > kluge_likelihood_difference_bug_patch and DA2eucdis > opteucdis): #DA1 seems not to have worked
+                DA2likelihood = -np.inf
+                DA2result = None
         except Exception as e:
-            DAlikelihood2 = -np.inf
+            DA2likelihood = -np.inf
             outf = open(outfilename, "a")
             outf.write("\ndualannealing2 failed with message : {}\n".format(e))
             outf.close()
     else:
-        DAlikelihood1 = DAlikelihood2 =-np.inf   
-        DAresult1 = DAresult2 = None     
-    
-
+        DA1likelihood = DA2likelihood =-np.inf   
+        DA1result = DA2result = None     
     [likelihood,result,outstring]= sorted([[OPTlikelihood,OPTresult,"Optimize"],[BHlikelihood,BHresult,"Basinhopping"],
-                                           [DAlikelihood1,DAresult1,"Dualannealing1"],[DAlikelihood2,DAresult2,"Dualannealing2"]], 
+                                           [DA1likelihood,DA1result,"Dualannealing1"],[DA2likelihood,DA2result,"Dualannealing2"]], 
                                            key=lambda x: x[0] if x[0] != -np.inf else float('-inf'))[-1]
     confidence_intervals = generate_confidence_intervals(func,list(result.x), arglist, likelihood,boundsarray)
     pm0tempval,pmmasstempval,pmvaltempval,paramdic,expectation,mode = writeresults(args,args.numparams,thetaNest,paramlabels,resultlabels,resultformatstrs,result.x,likelihood,confidence_intervals,outfilename,"\nOptimization: {}\nMaximized Likelihood, AIC, Parameter Estimates, 95% Confidence Intervals:\n".format(outstring))
@@ -662,43 +644,32 @@ def parsecommandline():
     global miscDebug
     parser = argparse.ArgumentParser()
     parser.add_argument("-a", dest="sfsfilename",required=True,type = str, help="Path for SFS file")
-    parser.add_argument("-c",dest="fix_theta_ratio",default=None,type=float,help="set the fixed value of thetaS/thetaN")
+    parser.add_argument("-c",dest="fix_theta_ratio",default=None,type=float,help="set the fixed value of thetaS/thetaN (i.e. mutation rate ratio)")
     if deprecated_options_OFF  == False:
         parser.add_argument("-d",dest="densityof2Ns",default = "fixed2Ns",type=str,help="gamma, lognormal, normal, uni3fixed,uni3float,fixed2Ns")
         parser.add_argument("-e",dest="includemisspec",action="store_true",default=False,help=" for unfolded, include a misspecification parameter") 
         parser.add_argument("-D",dest ="debugmode",default = False,action="store_true", help = "turn on debug mode,  only works if deprecated_options_OFF  == True")
         parser.add_argument("-q",dest="thetaNspacerange",default=100,type=int,help="optional setting for the range of thetaNspace, alternatives e.g. 25, 400")
-        parser.add_argument("-o",dest="fixmode0",action="store_true",default=False,help="fix the mode of 2Ns density at 0, only works for lognormal and gamma")    
-        # parser.add_argument("-z",dest="estimate_pointmass0",action="store_true",default=False,help="include a proportion of the mass at zero in the density model")    
         parser.add_argument('--profile', action='store_true', help="Enable profiling")    
         parser.add_argument("-w",dest="estimate_both_thetas",action="store_true",default=False,help="estimate both thetas, not just the ratio") 
     else:
         parser.add_argument("-d",dest="densityof2Ns",default = "fixed2Ns",type=str,help="gamma, lognormal, normal, fixed2Ns")
 
+    parser.add_argument("-g",dest="moreoptimization",default=False,action="store_true",help=" turn on optimization using basinhopping  and dualannealing (very slow, often finds better optimum)") 
     parser.add_argument("-f",dest="foldstatus",required=True,help="usage regarding folded or unfolded SFS distribution, 'isfolded', 'foldit' or 'unfolded' ")    
-    parser.add_argument("-g",dest="basinhoppingopt",default=False,action="store_true",help=" turn on global optimization using basinhopping (very slow, often finds better optimum)") 
-    parser.add_argument("-i",dest="optimizetries",type=int,default=0,help="run the regular scipy minimize optimizer # times, relatively fast but not as good as -u or -g")
     parser.add_argument("-m",dest="setmax2Ns",default=0,type=float,help="optional setting for 2Ns maximum, default = 0, use with -d lognormal or -d gamma")
     parser.add_argument("-M",dest="maxi",default=None,type=int,help="the maximum bin index to include in the calculations, default=None")
-    parser.add_argument("-p",dest="poplabel",default = "", type=str, help="a population name or other label for the output filename and for the chart")    
+    parser.add_argument("-p",dest="poplabel",default = "", type=str, help="a population name and/or data type or other label for the start of the output filename")    
     parser.add_argument("-t",dest="estimatemax2Ns",default=False,action="store_true",help=" if  -d lognormal or -d gamma,  estimate the maximum 2Ns value") 
     parser.add_argument("-r",dest="outdir",default = "", type=str, help="results directory")    
-    parser.add_argument("-u",dest="dualannealopt",default=False,action="store_true",help=" turn on global optimization using dualannealing (runs two opimizations, slow but on average better than basin hopping)") 
-    parser.add_argument("-v",dest="binranges",default=False,action="store_true",help=" sum sfs bins to get neutral (denominator) counts >= 10") 
-    parser.add_argument("-y",dest="estimate_pointmass",action="store_true",default=False,help="include a proportion of the mass at some point in the density model, requires normal, lognormal or gamma") 
     parser.add_argument("-x",dest="filecheck",action="store_true",default=False,help=" if true and output file already exists, the run is stopped, else a new numbered output file is made") 
     parser.add_argument("-z",dest="estimate_pointmass0",action="store_true",default=False,help="include a proportion of the mass at zero in the density model")    
-    parser.add_argument("-Q", dest="thetaratiorange", type=float, nargs="+", default=None, help="optional range for thetaratio")
-
-    parser.add_argument("-b",dest="dontkeepzeroratios",action="store_true",default=False,help=" if set, ratio is set to inf if either numerator or denominator is zero") 
-
+    parser.add_argument("-Q", dest="thetaratiorange", type=float, nargs="+", default=None, help="optional range for thetaratio (i.e. mutation rate ratio), low end followed by high end ")
 
     args  =  parser.parse_args(sys.argv[1:])  
     args.commandstring = " ".join(sys.argv[1:])
-
     if deprecated_options_OFF  == True: # add the things not included in args by parser.parse_args() when this is set 
-        args.fixmode0 = False
-        args.thetaNspacerange = 100
+        args.thetaNspacerange = 10 #100
         args.profile = False
         args.estimate_both_thetas = False
         args.includemisspec = False
@@ -710,33 +681,20 @@ def parsecommandline():
     if args.densityof2Ns not in ("lognormal","gamma"):
         if (args.estimatemax2Ns):
             parser.error('cannot use -t with -d normal or fixed 2Ns value')
-        if (args.fixmode0):
-            parser.error('cannot use -o, fixmode0,  with normal density or fixed 2Ns value')
-    if args.densityof2Ns in ("lognormal", "gamma") and not args.fixmode0 and args.setmax2Ns is None:
-        args.estimatemax2Ns = True # just in case it was not set  
-    if args.densityof2Ns=="uni3fixed" and (args.fixmode0 or args.estimate_pointmass0):
-        parser.error('cannot use -o or -z with uni3fixed model')
     if deprecated_options_OFF:
         if args.densityof2Ns not in ("gamma","lognormal","normal","fixed2Ns"):
             parser.error('{} not a valid model '.format(args.densityof2Ns))
     else:
         if args.densityof2Ns not in ("gamma","lognormal","normal","fixed2Ns","uni3fixed","uni3float"):
             parser.error('{} not a valid model '.format(args.densityof2Ns))            
-    if args.fixmode0:
-        if args.estimatemax2Ns == False:
-            parser.error(' must use -t with -o, fixmode0')
-        if args.estimate_pointmass0:
-            parser.error(' cannot have point mass at 0 and fixed mode at 0')
     if args.estimatemax2Ns:
         args.setmax2Ns = None
-    if args.estimate_pointmass0 and args.estimate_pointmass:
-        parser.error(' cannot have both pointmass (-y) and pointmass0 (-z)')
     if args.fix_theta_ratio and args.estimate_both_thetas == True:
         parser.error(' cannot use -c fix_theta_ratio with -w estimate_both_thetas ')
     if args.foldstatus != "unfolded" and args.includemisspec == True:
         parser.error(' cannot include a misspecification term (-e) when SFS is not folded (-f)')
-    if args.optimizetries == 0 and args.basinhoppingopt == False and args.dualannealopt == False:
-        parser.error(' either -i must be greater than 0, or -g or -u or some combination of these')
+    args.optimizetries = defaultnumberofbasicoptimizatinos
+    args.dontkeepzeroratios = True  # played with this but it seems to work better when we don't use ratios of zero. 
     return args
 
 if __name__ == '__main__':

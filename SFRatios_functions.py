@@ -38,6 +38,7 @@ from scipy.optimize import golden
 from scipy.special import erf, gamma, gammainc,gammaincc,seterr,_sf_error
 from functools import lru_cache
 import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 import logging
 import os
 sys.path.append("./")
@@ -297,6 +298,7 @@ def intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm):
             erftemp = erf_cache(z1/(sqrt2*sqz2b1*delta))
             log_temp3 = log_term2 + np.log(sqrt_pi_div_2*z1*abs(erftemp))
             log_result = log_term1 + safe_log1p_exp(log_temp3 - np.log(delta*sqz2b1))
+            # result = math.exp(log_result)
             result = mpmath.exp(log_result) # log_result is very often out of float range 
             return result
         except  (ValueError, ArithmeticError) as e:
@@ -909,7 +911,7 @@ def NegL_SFS_ThetaS_densityNs(p,max2Ns,nc ,dofolded,includemisspec,densityof2Ns,
         sum += -us + math.log(us)*counts[i] - math.lgamma(counts[i]+1)        
     return -sum    
  
-def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2Ns,onetheta,max2Ns,estimate_pointmass,estimate_pointmass0,maxi,fix_mode_0,zvals): 
+def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2Ns,onetheta,max2Ns,estimate_pointmass0,maxi,zvals): 
     """
         returns the negative of the log of the likelihood for the ratio of two SFSs
         estimates Theta values,  not their ratio
@@ -918,9 +920,7 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
         onetheta in True, False
         max2Ns  is either None,  or a fixed max value 
         estimate_pointmass0 in True, False
-        fix_mode_0 in True, False 
-
-
+        
         replaces:
             def NegL_SFSRATIO_thetaS_thetaN_fixedNs(p,nc ,dofolded,zvals,nog,estimate_pointmass0)
             def NegL_SFSRATIO_thetaS_thetaN_densityNs_max2Ns(p,max2Ns,nc ,maxi,dofolded,densityof2Ns,zvals)
@@ -932,7 +932,6 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
         max2Ns      1 if densityof2Ns is in ("lognormal","gamma") and max2Ns is None else 0 
         pointmass0  1 if estimate_pointmass0 else 0 
 
-        handles fix_mode_0 i.e. setting max2Ns so the mode of the distribution is 0 
         handles dofolded 
     """
     def calc_bin_i(i,z): 
@@ -948,8 +947,6 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
                     if densityof2Ns == "fixed2Ns":
                         if estimate_pointmass0:
                             ux = thetaS*pm0*(nc /(i*(nc -i)) if foldxterm else 1/i ) + (1-pm0)*ux # mass at 0 times neutral weight + (1- mass at 0) times selection weight
-                        elif estimate_pointmass:
-                            ux = thetaS * pmass * prf_selection_weight(nc,i,pval,dofolded,misspec) +  (1-pmass)*ux
 
                     alpha = ux/uy
                 sigmay = math.sqrt(uy)
@@ -964,8 +961,6 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
                 ux = thetaS*integrate2Ns(densityof2Ns,max2Ns,g,nc,i,foldxterm,misspec,g_xvals,densityadjust)
                 if estimate_pointmass0:
                     ux = thetaS*pm0*(nc /(i*(nc -i)) if foldxterm else 1/i ) + (1-pm0)*ux
-                elif estimate_pointmass:
-                    ux = thetaS * pmass * prf_selection_weight(nc,i,pval,dofolded,misspec) +  (1-pmass)*ux
                 uy = thetaN*nc /(i*(nc -i)) if foldxterm else thetaN/i    
                 alpha = ux/uy
                 sigmay = math.sqrt(uy)
@@ -1004,23 +999,9 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
         pm0 = p[unki]
         unki += 1
        
-    if estimate_pointmass:
-        pmass = p[unki]
-        pval = p[unki+1]
-        unki += 2          
     if max2Ns==None and densityof2Ns in ("lognormal","gamma"):
-        if fix_mode_0: # not in use as of 6/1/2024
-            exit()
-            # if densityof2Ns=="lognormal":
-            #     max2Ns = math.exp(p[holdki] - pow(p[holdki],2))
-            # if densityof2Ns=="gamma":
-            #     if p[holdki] < 1:
-            #         max2Ns = 0.0
-            #     else:
-            #         max2Ns = (p[holdki] - 1)*p[holdki+1]
-        else:
-            max2Ns = p[unki]
-            unki += 1
+        max2Ns = p[unki]
+        unki += 1
       
     if includemisspec:
         misspec = p[unki] 
@@ -1042,7 +1023,7 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
             return math.inf
     return -sum   
 
-def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,fix_theta_ratio,max2Ns,estimate_pointmass,estimate_pointmass0,fix_mode_0,maxi,thetaNspace,zvals): 
+def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,fix_theta_ratio,max2Ns,estimate_pointmass0,maxi,thetaNspace,zvals): 
     """
         returns the negative of the log of the likelihood for the ratio of two SFSs
         first parameter is the ratio of mutation rates
@@ -1052,7 +1033,6 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
         fixthetaratio is either None, or a fixed value for the ratio 
         max2Ns  is either None,  or a fixed max value 
         estimate_pointmass0 in True, False
-        fix_mode_0 in True, False 
 
         replaces:
             NegL_SFSRATIO_ratio_fixedNs
@@ -1066,7 +1046,6 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
         max2Ns      1 if densityof2Ns is in ("lognormal","gamma") and max2Ns is None else 0 
         pointmass0  1 if estimate_pointmass0 else 0 
 
-        handles fix_mode_0 i.e. setting max2Ns so the mode of the distribution is 0 
         handles dofolded 
     """
     def calc_bin_i(i,z): 
@@ -1083,8 +1062,6 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
                     if densityof2Ns == "fixed2Ns":
                         if estimate_pointmass0:
                             ux = pm0*(nc /(i*(nc -i)) if foldxterm else 1/i ) + (1-pm0)*ux # mass at 0 times neutral weight + (1- mass at 0) times selection weight
-                        elif estimate_pointmass:
-                            ux = pmass*prf_selection_weight(nc,i,pval,foldxterm,misspec) + (1-pmass) * ux
 
                     alpha = thetaratio*ux/(nc /(i*(nc -i)) if foldxterm else 1/i )
 
@@ -1102,8 +1079,6 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
                 ux = integrate2Ns(densityof2Ns,max2Ns,g,nc,i,foldxterm,misspec,g_xvals,densityadjust)
                 if estimate_pointmass0:
                     ux = pm0*(nc /(i*(nc -i)) if foldxterm else 1/i ) + (1-pm0)*ux # mass at 0 times neutral weight + (1- mass at 0) times selection weight
-                elif estimate_pointmass:
-                    ux =  (1-pmass)*ux + pmass* prf_selection_weight(nc,i,pval,foldxterm,misspec)
                 alpha = thetaratio*ux/(nc /(i*(nc -i)) if foldxterm else 1/i )
                 return intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)        
             except (ValueError, ArithmeticError) as e:
@@ -1145,23 +1120,10 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
     if estimate_pointmass0:
         pm0 = p[unki]
         unki += 1
-    if estimate_pointmass:
-        pmass = p[unki]
-        pval = p[unki+1]
-        unki += 2        
+    
     if max2Ns==None and densityof2Ns in ("lognormal","gamma"):
-        if fix_mode_0: # not in use as of 6/1/2024 
-            exit()
-            # if densityof2Ns=="lognormal":
-            #     max2Ns = math.exp(p[1] - p[2]*p[2])
-            # if densityof2Ns=="gamma":
-            #     if p[1] < 1:
-            #         max2Ns = 0.0
-            #     else:
-            #         max2Ns = (p[1] - 1)*p[2]
-        else:
-            max2Ns = p[unki]
-            unki += 1
+        max2Ns = p[unki]
+        unki += 1
 
     if includemisspec:
         misspec = p[unki] 
@@ -1180,6 +1142,7 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
         foldxterm = dofolded and i < nc //2 # True if summing two bins, False if not 
         temp =  calc_bin_i(i,zvals[i])
         sum += temp
+        # print("{:.4f} ".format(temp),end="")
         if sum == -math.inf:
             return math.inf
     if densityof2Ns in ("normal","lognormal","gamma"): 
@@ -1194,20 +1157,18 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
 def NegL_CodonPair_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,fix_theta_ratio,neg2Ns,thetaNspace,zvals): 
     """
         returns the negative of the log of the likelihood for the ratio of two codonpair SFSs
-        first parameter is the ratio of mutation rates
-        sidesteps the theta terms by integrating over thetaN in the probability of the ratio (i.e. calls intdeltalogprobratio())
+        i.e. both numerater and denominator of the ratio are from codon SFSs 
+        put one with more counts in the denominator 
+
+        as with a neutral denominator first parameter is the ratio of mutation rates
 
         assumes a single 2Ns value that can range from neg to pos 
         fixthetaratio is either None, or a fixed value for the ratio 
 
-        dofolded should be False 
         returns negative of likelihood using the probability of the ratio 
         unknown     # params
         ratio       0 if fix_theta_ratio is not None else 1 
         2Ns value   1 
-        misspecification 0 if includemisspec is False, else 1 
-
-        handles fix_mode_0 i.e. setting max2Ns so the mode of the distribution is 0 
         handles dofolded 
     """
     def calc_bin_i(i,z): 

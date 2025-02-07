@@ -71,9 +71,6 @@ import os
 import numpy as np 
 from scipy.stats import hypergeom
 
-
-
-
 def stochastic_round(number):
     floor_number = int(number)
     # Probability of rounding up is the fractional part of the number

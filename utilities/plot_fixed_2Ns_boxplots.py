@@ -5,7 +5,7 @@ import argparse
 import sys
 
 # Define a function to read the data from the file
-def read_data(file_path):
+def read_data(file_path,minval,maxval):
     data = []
     with open(file_path, 'r') as file:
         for line in file:
@@ -13,9 +13,10 @@ def read_data(file_path):
             if line:
                 values = line.split()
                 true_value = float(values[0])
-                if true_value != 50:
-                    values_for_boxplot = [float(val) for val in values[1:]]
-                    data.append((true_value, values_for_boxplot))
+                if minval == None or true_value >= minval:
+                    if maxval == None or true_value <= maxval:
+                        values_for_boxplot = [float(val) for val in values[1:]]
+                        data.append((true_value, values_for_boxplot))
     return data
 
 def custom_log_transform(value):
@@ -23,12 +24,15 @@ def custom_log_transform(value):
         return 0  # Handle exact zeros
     return np.sign(value) * np.log10(abs(value))
 
-def run(inputfilepath, outputfilepath):
+def run(args):
     # Obtain the inputfilepath_prefix from the full pathname
+    inputfilepath = args.inputfilepath
+    outputfilepath = args.outputfilepath
+
     inputfilepath_prefix = os.path.splitext(os.path.basename(inputfilepath))[0].split('_gvals')[0]
 
     # Read data from the file
-    data = read_data(inputfilepath)
+    data = read_data(inputfilepath,args.minval,args.maxval)
 
     # Initialize a figure and axes for the boxplots
     fig, ax = plt.subplots()
@@ -122,8 +126,10 @@ def run(inputfilepath, outputfilepath):
 
 
 
-def holdnewrun(inputfilepath, outputfilepath):
+def holdnewrun(args):
     # Obtain the inputfilepath_prefix from the full pathname
+    inputfilepath = args.inputfilepath
+    outputfilepath = args.outputfilepath
     inputfilepath_prefix = os.path.splitext(os.path.basename(inputfilepath))[0].split('_gvals')[0]
 
     # Read data from the file
@@ -287,6 +293,8 @@ def parsecommandline():
     parser = argparse.ArgumentParser()
     parser.add_argument("-i",dest="inputfilepath",required=True, type=str, help="file with 2Ns values and lists of estimates ")    
     parser.add_argument("-o",dest="outputfilepath",required=True, type=str, help="filename for plot (must end in .pdf or .png)")    
+    parser.add_argument("-m",dest="minval",type=float,help="optional minimum true value to consider for boxplots")
+    parser.add_argument("-x",dest="maxval",type=float,help="optional maximum true value to consider for boxplots")
     args  =  parser.parse_args(sys.argv[1:])  
     args.commandstring = " ".join(sys.argv[1:])
 
@@ -300,4 +308,4 @@ if __name__ == '__main__':
     """
    
     args = parsecommandline()
-    run(args.inputfilepath,args.outputfilepath)
+    run(args)

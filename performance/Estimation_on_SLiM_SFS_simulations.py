@@ -254,11 +254,6 @@ def set_bounds_and_start_possibilities(args,thetaNest,thetaSest,ntrials):
     #     bounds += [(0.0,0.5)]
     #     # bounds += [(0.0,0.99)]
     #     for sv in startvals: sv.append(random.uniform(0.01,0.49))
-    # if args.estimate_pointmass:
-    #     # bounds += [(0.0,0.5),(-10.0, 10.0)]        
-    #     bounds += [(0.0,0.5),(-20.0, 20.0)]        
-    #     for sv in startvals: sv.append(random.uniform(0.01,0.49))
-    #     for sv in startvals: sv.append(random.uniform(-5,1))
     if args.estimatemax2Ns:
         bounds += [(-20.0,20.0)]
         for sv in startvals: sv.append(random.uniform(-5,1))
@@ -327,7 +322,7 @@ def run(args):
     if use_misspec:
         misspecresults = []
     func = SFRf.NegL_SFSRATIO_estimate_thetaratio
-    basearglist = [nc,dofoldedlikelihood,use_misspec,densityof2Ns,fix_theta_ratio,fixedmax2Ns,False,False,False,False] 
+    basearglist = [nc,dofoldedlikelihood,use_misspec,densityof2Ns,fix_theta_ratio,fixedmax2Ns,False,False] 
     successntrialsperg = []
     for gi,g in enumerate(gvals):
         # print(g)

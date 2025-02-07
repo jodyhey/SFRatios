@@ -124,7 +124,6 @@ def parsecommandline():
     parser.add_argument("-e",dest="ranseed",default=1,type=int,help="random number seed integer, default = 1")
     parser.add_argument("-d",dest="densityof2Ns",default = "fixed2Ns",type=str,help="gamma, lognormal, normal, fixed2Ns")
         # parser.add_argument("-e",dest="includemisspec",action="store_true",default=False,help=" for unfolded, include a misspecification parameter") 
-        # parser.add_argument("-o",dest="fixmode0",action="store_true",default=False,help="fix the mode of 2Ns density at 0, only works for lognormal and gamma")    
     parser.add_argument("-f",dest="folded",action="store_true", help="fold the sfs  (unfolded is default state)")    
     parser.add_argument("-l", dest="outfilelabel",default="",type = str, help="string for start of out file name")
     parser.add_argument("-k",dest="numdatasets",default=1,type=int,help="number of data sets to simulate, default = 1")

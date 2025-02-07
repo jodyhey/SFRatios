@@ -1,17 +1,20 @@
 # SF_Ratios Documentation
-by Jody Hey, 2024
+by Jody Hey, 2025
 
-The SF_Ratios archive contains materials associated with the manuscript "Poisson random field ratios in population genetics:  estimating the strength of selection while sidestepping non-selective factors" by Jody Hey and Vitor Pavinato. Included are the main scripts for estimating selection parameters, the site frequency spectra for the *Drosophila melanogaster* data,  and scripts for testing the method on simulated data.
+The SF_Ratios archive contains materials associated with the manuscript "Isolating selective from non-selective forces using site frequency ratios" by Jody Hey and Vitor Pavinato. Included in this archive are the main scripts for estimating selection parameters, as well as other utility scripts for manipulating data, making figures and assessing performance. 
 
 This archive is also a copy of a Visual Studio Code Workspace, including a launch.json file if anyone wants to use it. 
 
 ## Main Scripts
-* SF_Ratios.py  - selection model fitting for ratios of Site Frequency Spectra, Selected/Neutral
-* SF_Ratios_functions.py - various functions called by SF_Ratios.py and other scripts in this archive 
+* SFRatios.py  - selection model fitting for ratios of Site Frequency Spectra, Selected/Neutral
+* SFRatios_functions.py - various functions called by SFRatios.py and other scripts in this archive 
 
-SF_Ratios.py should generally be run using the -g option that turns on basinhopping for optimization.  This is quite slow,  and some runs may take a couple days,  but it is often worth it. 
+SFRatios.py has an option (-g) for more thorough optimization on scipy basinhopping and dualannealing. This is quite slow,  and some runs may take a day or so,  but it is often worth it. 
 
 ## Subfolder Contents
+### ./Drosophila_SFS_pipeline
+Summary and scripts of the pipeline for building the Drosophila data sets
+
 ### ./performance
 Scripts and folders for assessing estimator performance.
 * Estimation_on_WrightFisher_SF_simulations.py - runs ROC, Power and Chi^2 comparison analyses on data simulated under PRF.  
@@ -32,9 +35,4 @@ Data files for North Caroline (DGRP2) and Zambia (DPGP3) samples. All files have
 * simulate_WF_SFSs_for_SF_Ratios.py - simulate a data set for SF_Ratios.py 
 ### ./slim_work
 Contains folders and files used for generating simualted data sets with SLiM.  These are used by  ./performance/Estimation_on_SLiM_SFS_simulations.py  and ./performance/Simulate_SFS_with_SLiM.py.
-#### ./slim_work/output
-Contains the results from  ./performance/Simulate_SFS_with_SLiM.py for a constant lognormal run
-#### ./slim_work/functions
-Contains SLiM function files required by  ./performance/Simulate_SFS_with_SLiM.py.
-#### ./slim_work/models
-Contains demograhpic model files to be run by SLiM using   ./performance/Simulate_SFS_with_SLiM.py.
+
