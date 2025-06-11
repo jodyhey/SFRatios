@@ -83,7 +83,59 @@ def stochastic_round(number):
     else:
         return floor_number
 
-def getSFSratios(fn,dofolded,isfolded = False,dontkeepzeroratios=False): 
+def find_subranges(neusfs, args):
+    """
+    Identifies subranges in a list where each subrange sums to at least a minimum value.
+    
+    Parameters:
+    neusfs (list): List of values (counts) where index corresponds directly to bin number (0-indexed)
+    args: Object with attributes:
+        maxi (int): Lowest bin number where value is less than mindenom
+        mindenom (float): Minimum sum required for each subrange
+    
+    Returns:
+    list: Array of subranges, each represented as (start_bin, end_bin+1) following Python convention
+          of half-open intervals [start, end)
+    """
+    subranges = []
+    
+    # Check if args.maxi + 1 is beyond the array length
+    if args.maxi + 1 >= len(neusfs):
+        return subranges  # No subranges possible
+    
+    # Start from args.maxi + 1
+    current_index = args.maxi + 1
+    
+    while current_index < len(neusfs):
+        sum_values = 0
+        start_bin = current_index
+        end_bin = start_bin
+        
+        # Continue adding bins until sum reaches or exceeds mindenom
+        while end_bin < len(neusfs):
+            # Add the value at this bin
+            sum_values += neusfs[end_bin]
+            
+            if sum_values >= args.mindenom:
+                # We've reached the minimum denominator
+                subranges.append((start_bin, end_bin + 1))  # Python-style half-open interval
+                # Move to the next bin for the next subrange
+                current_index = end_bin + 1
+                break
+            
+            # If we haven't reached mindenom, move to the next bin
+            end_bin += 1
+        
+        # If we didn't find a valid subrange starting from current_index
+        # or if we've reached the end of the array, exit the loop
+        if end_bin >= len(neusfs) or sum_values < args.mindenom:
+            break
+    
+    return subranges
+
+
+
+def getSFSratios(args,fn,dofolded,isfolded = False,dontkeepzeroratios=False): 
     """
         data text file format: 
             line 1:  arbitrary text
@@ -141,7 +193,29 @@ def getSFSratios(fn,dofolded,isfolded = False,dontkeepzeroratios=False):
     thetaSest = sum(selsfs)/sum([1/i for i in range(1,nc )]) # this should work whether or not the sfs is folded 
     # thetaNspace used for integrating over thetaN 
     thetaNspace = np.logspace(np.log10(thetaNest/math.sqrt(args.thetaNspacerange)), np.log10(thetaNest*math.sqrt(args.thetaNspacerange)), num=101) # used for likelihood calculation,  logspace integrates better than linspace
-    return datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace
+    args.subranges = None
+    if args.mindenom is not None:
+        args.maxi = len(neusfs)
+        for i,c in enumerate(neusfs[1:]):
+            if c < args.mindenom:
+                args.maxi = i
+                break
+        if args.sumbins:
+            args.subranges = find_subranges(neusfs, args)
+            ratios = [math.inf if  neusfs[j] <= 0.0 else selsfs[j]/neusfs[j] for j in range(0,args.maxi+1)]
+            tempneusfs = neusfs[:args.maxi + 1]
+            tempselsfs = selsfs[:args.maxi + 1]
+            for subrange in args.subranges:
+                nm = sum(selsfs[subrange[0]:subrange[1]])
+                dm = sum(neusfs[subrange[0]:subrange[1]])
+                ratios.append(nm/dm)
+                tempneusfs.append(dm)
+                tempselsfs.append(nm)
+            args.maxi = None  # use subranges,  not maxi 
+            neusfs = tempneusfs
+            selsfs = tempselsfs
+
+    return args,datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace
 
 def update_table(X, headers, new_data, new_labels):
     # Update headers and columns for table of observed and expected values 
@@ -162,35 +236,35 @@ def calcexpectedSFS(args,paramdic,pm0tempval,nc):
         params = (paramdic["mu"],paramdic["sigma"])
         if args.estimatemax2Ns:   
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],paramdic["max2Ns"],nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio)
+                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio,subranges = args.subranges)
         else:
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],args.setmax2Ns,nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio)
+                tempmisspec,args.densityof2Ns,params,pm0tempval, True, tempthetaratio,subranges = args.subranges)
     elif args.densityof2Ns=='gamma':
         # params = (paramdic["alpha"],paramdic["beta"])
         params = (paramdic["mean"],paramdic["shape"])
         if args.estimatemax2Ns:
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],paramdic["max2Ns"],nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)
+                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio,subranges = args.subranges)
         else:
             neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],args.setmax2Ns,nc ,None,args.dofolded,
-                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)
+                tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio,subranges = args.subranges)
     elif args.densityof2Ns=="normal":
         params = (paramdic["mu"],paramdic["sigma"])
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio,subranges = args.subranges)
     elif args.densityof2Ns == "uni3fixed":
         params = (paramdic["p0"],paramdic["p1"])
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)                
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio,subranges = args.subranges)                
     elif args.densityof2Ns == "uni3float":
         params = (paramdic["p0"],paramdic["p1"],paramdic["c0"],paramdic["c1"])
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)                
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio,subranges = args.subranges)                
     elif args.densityof2Ns =="fixed2Ns":
         params = (paramdic["2Ns"],)
         neusfs,selsfs,ratios = SRF.simsfsratio(paramdic["thetaN"],paramdic["thetaS"],None,nc ,None,args.dofolded,
-            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio)    
+            tempmisspec,args.densityof2Ns,params, pm0tempval, True, tempthetaratio,subranges = args.subranges)    
     return neusfs,selsfs,ratios
 
 def buildSFStable(args,paramdic,pm0tempval,pmmasstempval,pmvaltempval,X,headers,nc):
@@ -493,7 +567,7 @@ def run(args):
     args.dofolded = args.foldstatus == "isfolded"  or args.foldstatus == "foldit"
 
     #GET RATIO DATA 
-    datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace = getSFSratios(args.sfsfilename,args.dofolded,isfolded=isfolded)
+    args,datafileheader,nc,neusfs,selsfs,ratios,thetaNest,thetaSest,thetaNspace = getSFSratios(args,args.sfsfilename,args.dofolded,isfolded=isfolded)
     args.nc = nc 
     args.datafileheader = datafileheader
     args.numparams = countparameters(args)
@@ -519,12 +593,17 @@ def run(args):
     #SET OPTIMIZATION FUNCTIONS AND TERMS
     boundsarray,startvals = set_bounds_and_start_possibilities(args,thetaNest,thetaSest,args.optimizetries)
     if args.estimate_both_thetas == False:
-        func = SRF.NegL_SFSRATIO_estimate_thetaratio
-        arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,args.fix_theta_ratio,args.setmax2Ns,args.estimate_pointmass0,args.maxi,thetaNspace,ratios)
+        if args.sumbins == False:
+            func = SRF.NegL_SFSRATIO_estimate_thetaratio
+            arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,args.fix_theta_ratio,args.setmax2Ns,args.estimate_pointmass0,args.maxi,thetaNspace,ratios)
                             # p,nc,dofolded,includemisspec,densityof2Ns,fix_theta_ratio,max2Ns,estimate_pointmass0,maxi,thetaNspace,zvals): 
+        else:
+            func = SRF.NegL_SFSRATIO_estimate_thetaratio_with_subranges
+            arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,False,args.setmax2Ns,args.estimate_pointmass0,thetaNspace,args.subranges,ratios)
     else:
         func = SRF.NegL_SFSRATIO_estimate_thetaS_thetaN
         arglist = (nc,args.dofolded,args.includemisspec,args.densityof2Ns,False,args.setmax2Ns,args.estimate_pointmass0,args.maxi,ratios)     
+
 
     #RUN MINIMIZE TRIALS
     outf = open(outfilename, "a")
@@ -665,6 +744,8 @@ def parsecommandline():
     parser.add_argument("-x",dest="filecheck",action="store_true",default=False,help=" if true and output file already exists, the run is stopped, else a new numbered output file is made") 
     parser.add_argument("-z",dest="estimate_pointmass0",action="store_true",default=False,help="include a proportion of the mass at zero in the density model")    
     parser.add_argument("-Q", dest="thetaratiorange", type=float, nargs="+", default=None, help="optional range for thetaratio (i.e. mutation rate ratio), low end followed by high end ")
+    parser.add_argument("-v",dest="mindenom",default=None,type=int,help="optional setting the minimum count in a denominator, e.g. 10. If used, args.maxi is set to this bin number")
+    parser.add_argument("-w",dest="sumbins",action="store_true",default=False,help=" requies -v, if true sums neutral SFS bins till mindenom is reached ") 
 
     args  =  parser.parse_args(sys.argv[1:])  
     args.commandstring = " ".join(sys.argv[1:])

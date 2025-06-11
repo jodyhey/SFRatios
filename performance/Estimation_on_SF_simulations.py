@@ -1,3 +1,8 @@
+"""
+    run statistical analysis on Site Frequency-based estimates of selection
+    Uses standard WrightFisher models
+    use either Poisson Random Field random values or ratios of Poisson Random Field random values
+"""
 import sys
 import numpy as np
 from scipy.stats import norm

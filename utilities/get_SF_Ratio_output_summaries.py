@@ -36,7 +36,7 @@ def calcdistances(lines):
 
 
 # Function to parse each .out file
-def parse_file(filepath,headers):
+def parse_file(args,filepath,headers):
     """
         crappy code
         files can vary a lot in terms of their model parameters 
@@ -96,12 +96,15 @@ def parse_file(filepath,headers):
             data["OptMethods"] += "," if len(data["OptMethods"]) > 0 else ""
             data["OptMethods"] += "DA"
         li += 1
-
-    while "trial\t" not in lines[li]:
-
+    
+    while args.oldformat and "trial\t" not in lines[li]:
         li += 1
         if li >= len(lines):
             break
+    while args.oldformat==False and "Maximized Likelihood, AIC, Parameter Estimates, 95% Confidence Intervals:" not in lines[li]:
+        li += 1
+        if li >= len(lines):
+            break        
     li += 1
 
 # Qratio	p1	p2	estMax2Ns	pm0_mass	pm_mass	pm_val
@@ -229,7 +232,7 @@ def run(args):
         for filename in os.listdir(ddir):
             if filename.endswith('.out') and (args.skipfilestring is None or args.skipfilestring not in filename):
                 filepath = os.path.join(ddir, filename)
-                row = parse_file(filepath,headers)
+                row = parse_file(args,filepath,headers)
                 if args.poplabel is not None:
                     # row.insert(0,args.poplabel)
                     row[0] = args.poplabel
@@ -243,6 +246,7 @@ def parsecommandline():
     parser.add_argument("-f",dest="outfilename",required=True,type=str,help="outfilename")
     parser.add_argument("-p",dest="poplabel",default = None,help="population/sample label")
     parser.add_argument("-x",dest="skipfilestring",default = None,help="skip files with this string in their name, e.g. '_PM_'")
+    parser.add_argument("-t",dest="oldformat",default = False,action="store_true",help="read SFRatios.py output files with older format, from before 2.4.2025")
     args  =  parser.parse_args(sys.argv[1:])  
     args.commandstring = " ".join(sys.argv[1:])
     return args

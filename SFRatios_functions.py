@@ -282,6 +282,8 @@ def logprobratio(alpha,beta,z):  # called by NegL_SFSRATIO_estimate_thetaS_theta
 def intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm):
     """
         integrates over the delta term in the probability of a ratio of two normal distributions
+        i can be a integer, in which case it is a position in the SFS 
+        or else it can be a subrange of indices 
     """
     def safe_log1p_exp(x): # suggested by claude so we can handle log of exp with floats 
         if x > 709:  # np.log(np.finfo(np.float64).max)
@@ -357,7 +359,15 @@ def intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm):
     z2b1 = 1+z2/beta
     sqz2b1 = math.sqrt(z2b1)
     betasqroot = math.sqrt(beta) 
-    uy = thetaNspace * nc /(i*(nc -i)) if foldxterm else thetaNspace/i    
+    if isinstance(i,int):
+        uy = thetaNspace * nc /(i*(nc -i)) if foldxterm else thetaNspace/i    
+    else: #i is a subrange:
+        sbr = range(i[0],i[1])
+        if foldxterm:
+            uy = thetaNspace * sum([nc / (i * (nc - i)) for i in sbr])
+        else:
+            uy = thetaNspace * sum([1/i  for i in sbr])
+
     deltavals = 1/np.sqrt(uy)
 
     # using the older rprobdelta() function
@@ -484,6 +494,54 @@ def prf_selection_weight(nc, i, g, dofolded, misspec):
                 else:
 
                     us = (1 +(-1+tempc_without1) - (tempc_without1 * temph - 2*temph)) * (nc / (2 * i * (nc - i)))
+    if us  < 0.0:
+        return 0.0
+    else:
+        return us 
+
+
+def prf_selection_weight_with_subrange(nc, subrange, g, dofolded):
+    """
+        Poisson random field selection weight for g=2Ns for bins in subrange
+        this is the function you get when you integrate the product of two terms:
+             (1) WF term for selection    (1 - E^(-2 2 N s(1 - q)))/((1 - E^(-2 2 N s)) q(1 - q))  
+             (2) bionomial sampling formula for i copies,  given allele frequency q 
+        over the range of allele frequencies 
+        use cached hyp1f1 function
+    """    
+    sbr = range(subrange[0],subrange[1])
+    if abs(g) < 1e-3:
+        if dofolded:
+            us = sum([nc / (i * (nc - i)) for i in sbr])
+        else:
+            us = sum([1/i  for i in sbr])
+    else:
+        tempc_without1 = coth_without1(g)  # coth(g) - 1 if g > 0 else coth(g) + 1 
+        us = 0
+        if dofolded:
+            for i in sbr:
+                temph1 = cached_hyp1f1(i, nc, 2*g)
+                temph2 = cached_hyp1f1(nc - i, nc, 2*g)
+                temph = temph1 + temph2
+                if g > 0:
+                    if tempc_without1 == 0 or temph == math.inf: # it seems that when temph is inf  tempc_without1 is very near 0 
+                        us += (nc / (2 * i * (nc - i))) * 4 
+                    else:
+                        us += (nc / (2 * i * (nc - i))) * (2 + 2 * (1+tempc_without1) - (tempc_without1 * temph))
+
+                else:
+                    us += (nc / (2 * i * (nc - i))) * (2 + 2 * (-1+tempc_without1) - (tempc_without1 * temph - 2*temph))
+        else:
+            for i in sbr:
+                temph = cached_hyp1f1(i, nc, 2*g)
+                if g > 0:
+                    if tempc_without1 == 0 or temph == math.inf: # it seems that when temph is inf  tempc_without1 is very near 0 
+                        us += (nc / (2 * i * (nc - i))) * 2                 
+                    else:
+                        us += (nc / (2 * i * (nc - i))) * (1 + (1+tempc_without1) - (tempc_without1 * temph))
+                else:
+                    us += (nc / (2 * i * (nc - i))) * (1 + (-1+tempc_without1) - (tempc_without1 * temph - 2*temph))
+
     if us  < 0.0:
         return 0.0
     else:
@@ -883,12 +941,12 @@ def NegL_SFS_Theta_Ns(p,nc,dofolded,includemisspec,maxi,counts):
         return temp     
 
     assert(counts[0]==0)
-    sum = 0
+    sumlike = 0
     k = len(counts) if maxi in (None,False) else min(len(counts),maxi)
     for i in range(1,k):
-        # sum += L_SFS_Theta_Ns_bin_i(p,i,nc,dofolded,counts[i])
-        sum += L_SFS_Theta_Ns_bin_i(i,counts[i])
-    return -sum 
+        # sumlike += L_SFS_Theta_Ns_bin_i(p,i,nc,dofolded,counts[i])
+        sumlike += L_SFS_Theta_Ns_bin_i(i,counts[i])
+    return -sumlike 
 
 
 def NegL_SFS_ThetaS_densityNs(p,max2Ns,nc ,dofolded,includemisspec,densityof2Ns,counts):
@@ -899,7 +957,7 @@ def NegL_SFS_ThetaS_densityNs(p,max2Ns,nc ,dofolded,includemisspec,densityof2Ns,
             thetaS
             terms for 2Ns density
     """
-    sum = 0
+    sumlike = 0
     thetaS = p[0]
     term1 = p[1]
     term2 = p[2]
@@ -908,8 +966,8 @@ def NegL_SFS_ThetaS_densityNs(p,max2Ns,nc ,dofolded,includemisspec,densityof2Ns,
     for i in range(1,len(counts)):
         intval = integrate2Ns(densityof2Ns,max2Ns,(term1,term2),nc,i,dofolded,misspec,g_xvals,densityadjust)
         us = thetaS*intval 
-        sum += -us + math.log(us)*counts[i] - math.lgamma(counts[i]+1)        
-    return -sum    
+        sumlike += -us + math.log(us)*counts[i] - math.lgamma(counts[i]+1)        
+    return -sumlike    
  
 def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2Ns,onetheta,max2Ns,estimate_pointmass0,maxi,zvals): 
     """
@@ -1012,16 +1070,16 @@ def NegL_SFSRATIO_estimate_thetaS_thetaN(p,nc,dofolded,includemisspec,densityof2
     if densityof2Ns not in ("fixed2Ns","fix2Ns0"):
         ex,mode,sd,densityadjust,g_xvals = getXrange(densityof2Ns,g,max2Ns)
 
-    sum = 0
+    sumlike = 0
     summaxi = maxi if maxi not in (None,False) else len(zvals)
     # for i in range(1,len(zvals)):
     for i in range(1,summaxi):
         foldxterm = dofolded and i < nc //2 # True if summing two bins, False if not 
         temp =  calc_bin_i(i,zvals[i])
-        sum += temp
-        if sum == -math.inf:
+        sumlike += temp
+        if sumlike == -math.inf:
             return math.inf
-    return -sum   
+    return -sumlike   
 
 def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,fix_theta_ratio,max2Ns,estimate_pointmass0,maxi,thetaNspace,zvals): 
     """
@@ -1135,24 +1193,182 @@ def NegL_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,densityof2Ns,
         ex,mode,sd,densityadjust,g_xvals = getXrange(densityof2Ns,g,max2Ns)
     else:
         densityadjust = 1.0
-    sum = 0
-    summaxi = maxi if maxi not in (None,False) else len(zvals)
+    sumlike = 0
+    summaxi = (maxi + 1) if maxi not in (None,False) else len(zvals)
     # for i in range(1,len(zvals)):
     for i in range(1,summaxi):
         foldxterm = dofolded and i < nc //2 # True if summing two bins, False if not 
         temp =  calc_bin_i(i,zvals[i])
-        sum += temp
+        sumlike += temp
         # print("{:.4f} ".format(temp),end="")
-        if sum == -math.inf:
+        if sumlike == -math.inf:
             return math.inf
     if densityof2Ns in ("normal","lognormal","gamma"): 
         # kludgy,  penalize if ex or mode is too low, penalty is 10^6 times the difference 
         if ex <  minimum_2Ns_location:
-            sum -=  (minimum_2Ns_location - ex)*1e6
+            sumlike -=  (minimum_2Ns_location - ex)*1e6
         elif mode <  minimum_2Ns_location :
-            sum -= (minimum_2Ns_location - mode)*1e6
+            sumlike -= (minimum_2Ns_location - mode)*1e6
   
-    return -sum   
+    return -sumlike   
+
+
+def NegL_SFSRATIO_estimate_thetaratio_with_subranges(p,nc,dofolded,includemisspec,densityof2Ns,fix_theta_ratio,max2Ns,estimate_pointmass0,thetaNspace,subranges,zvals): 
+    """
+        like  NegL_SFSRATIO_estimate_thetaratio
+        but uses subranges of frequency bins,  does not use maxi
+    """
+    def calc_bin_i(i,z): 
+        if densityof2Ns in ("fixed2Ns","fix2Ns0"):
+            try:
+                # if z==math.inf or z==0.0:
+                #     return 0.0
+                if z==math.inf:
+                    return 0.0                
+                if g == 0:
+                    alpha = thetaratio
+                else:
+                    ux = prf_selection_weight(nc,i,g,foldxterm,misspec)
+                    if densityof2Ns == "fixed2Ns":
+                        if estimate_pointmass0:
+                            ux = pm0*(nc /(i*(nc -i)) if foldxterm else 1/i ) + (1-pm0)*ux # mass at 0 times neutral weight + (1- mass at 0) times selection weight
+
+                    alpha = thetaratio*ux/(nc /(i*(nc -i)) if foldxterm else 1/i )
+
+                returnval = intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)      
+
+                return returnval
+
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf
+            except Exception as e:
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
+
+        else:
+            try:
+                ux = integrate2Ns(densityof2Ns,max2Ns,g,nc,i,foldxterm,misspec,g_xvals,densityadjust)
+                if estimate_pointmass0:
+                    ux = pm0*(nc /(i*(nc -i)) if foldxterm else 1/i ) + (1-pm0)*ux # mass at 0 times neutral weight + (1- mass at 0) times selection weight
+                alpha = thetaratio*ux/(nc /(i*(nc -i)) if foldxterm else 1/i )
+                return intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)        
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf
+            except Exception as e:
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
+
+    def calc_subrange(subrange,z): 
+        if densityof2Ns in ("fixed2Ns","fix2Ns0"):
+            try:
+                if z==math.inf:
+                    return 0.0                
+                if g == 0:
+                    alpha = thetaratio
+                else:
+                    ux = prf_selection_weight_with_subrange(nc, subrange, g, foldxterm)
+                    if foldxterm:
+                        uy = sum([nc / (i * (nc - i)) for i in range(subrange[0],subrange[1])])
+                    else:
+                        uy = sum([1/i  for i in  range(subrange[0],subrange[1])])
+                    alpha = thetaratio*ux/uy
+
+                returnval = intdeltalogprobratio(alpha,z,thetaNspace,nc,subrange,foldxterm)      
+
+                return returnval
+
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf
+            except Exception as e:
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
+
+        else:
+            try:
+                ux = integrate2Ns(densityof2Ns,max2Ns,g,nc,i,foldxterm,misspec,g_xvals,densityadjust)
+                if estimate_pointmass0:
+                    ux = pm0*(nc /(i*(nc -i)) if foldxterm else 1/i ) + (1-pm0)*ux # mass at 0 times neutral weight + (1- mass at 0) times selection weight
+                alpha = thetaratio*ux/(nc /(i*(nc -i)) if foldxterm else 1/i )
+                return intdeltalogprobratio(alpha,z,thetaNspace,nc,i,foldxterm)        
+            except (ValueError, ArithmeticError) as e:
+                return -math.inf
+            except Exception as e:
+                handle_error(e,"calc_bin_i: densityof2Ns {} i {} z {}".format(densityof2Ns,i,z))
+                                
+
+    if isinstance(p,(int,float)):
+        p = [p]
+    else:
+        p = list(p)
+    unki = 0
+    if fix_theta_ratio in (None,False):
+        thetaratio = p[0]
+        unki = 1
+    else:
+        thetaratio = fix_theta_ratio
+    if densityof2Ns == "fixed2Ns":
+        g = p[unki]
+        unki += 1
+    elif densityof2Ns  == "fix2Ns0":
+        g = 0.0
+    else:
+        if densityof2Ns=="uni3fixed":
+            g = (p[unki],p[unki+1])
+            if ((0 < g[0] < 1) == False) or ((0 < g[1] < 1) == False) or ((g[0] + g[1]) >= 1):
+                return math.inf
+            unki += 2
+        elif densityof2Ns=="uni3float":
+            g = (p[unki],p[unki+1],p[unki+2],p[unki+3])
+            if ((0 < g[0] < 1) == False) or ((0 < g[1] < 1) == False) or ((g[0] + g[1]) >= 1) or  not (discrete3lowerbound < g[2] < g[3] < discrete3upperbound):
+                return math.inf
+            unki += 4 
+        elif densityof2Ns in ("normal","gamma","lognormal"):
+            g = (p[unki],p[unki+1])
+            unki += 2 
+
+
+    if estimate_pointmass0:
+        pm0 = p[unki]
+        unki += 1
+    
+    if max2Ns==None and densityof2Ns in ("lognormal","gamma"):
+        max2Ns = p[unki]
+        unki += 1
+
+    if includemisspec:
+        misspec = p[unki] 
+        unki += 1
+    else:
+        misspec = 0.0        
+    # if densityof2Ns in ("normal","lognormal","gamma"):
+    if densityof2Ns in ("normal","lognormal","gamma","uni3fixed","uni3float"):
+        ex,mode,sd,densityadjust,g_xvals = getXrange(densityof2Ns,g,max2Ns)
+    else:
+        densityadjust = 1.0
+    sumlike = 0
+    assert len(subranges) > 0
+    summaxi = subranges[0][0]
+    # for i in range(1,len(zvals)):
+    for i in range(1,summaxi):
+        foldxterm = dofolded and i < nc //2 # True if summing two bins, False if not 
+        temp =  calc_bin_i(i,zvals[i])
+        sumlike += temp
+        # print("{:.4f} ".format(temp),end="")
+        if sumlike == -math.inf:
+            return math.inf
+    sbr_index = subranges[0][0] # this is the first position in the first subrange and the first zval from a sum over ranges
+    for subrange in subranges:
+        foldxterm = dofolded
+        temp = calc_subrange(subrange,zvals[sbr_index])
+        sbr_index += 1
+        sumlike += temp
+        if sumlike == -math.inf:
+            return math.inf
+    if densityof2Ns in ("normal","lognormal","gamma"): 
+        # kludgy,  penalize if ex or mode is too low, penalty is 10^6 times the difference 
+        if ex <  minimum_2Ns_location:
+            sumlike -=  (minimum_2Ns_location - ex)*1e6
+        elif mode <  minimum_2Ns_location :
+            sumlike -= (minimum_2Ns_location - mode)*1e6
+  
+    return -sumlike   
 
 def NegL_CodonPair_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,fix_theta_ratio,neg2Ns,thetaNspace,zvals): 
     """
@@ -1211,14 +1427,14 @@ def NegL_CodonPair_SFSRATIO_estimate_thetaratio(p,nc,dofolded,includemisspec,fix
         unki += 1
     else:
         misspec = 0.0        
-    sum = 0
+    sumlike = 0
     for i in range(1,len(zvals)):
         foldxterm = dofolded and i < nc //2 # True if summing two bins, False if not 
         temp =  calc_bin_i(i,zvals[i])
-        sum += temp
-        if sum == -math.inf:
+        sumlike += temp
+        if sumlike == -math.inf:
             return math.inf
-    return -sum   
+    return -sumlike   
 
 
 def simsfs_continuous_gdist(theta,max2Ns,nc,misspec,maxi,densityof2Ns, params,pm0, returnexpected,pmmass = None,pmval = None):
@@ -1297,7 +1513,7 @@ def simsfs(theta,g,nc , misspec,maxi, returnexpected,pm0=None,pmmass=None,pmval=
     return sfs,sfsfolded
 
 
-def simsfsratio(thetaN,thetaS,max2Ns,nc ,maxi,dofolded,misspec,densityof2Ns,params,pm0, returnexpected, thetaratio,pmmass = None,pmval = None):
+def simsfsratio(thetaN,thetaS,max2Ns,nc ,maxi,dofolded,misspec,densityof2Ns,params,pm0, returnexpected, thetaratio,pmmass = None,pmval = None,subranges = None):
     """
      nc  is the # of sampled chromosomes 
 
@@ -1322,9 +1538,35 @@ def simsfsratio(thetaN,thetaS,max2Ns,nc ,maxi,dofolded,misspec,densityof2Ns,para
         ssfs,ssfsfolded = simsfs_continuous_gdist(thetaS,max2Ns,nc ,misspec,maxi,densityof2Ns,params,pm0,returnexpected,pmmass = pmmass,pmval = pmval)
     if dofolded:
         ratios = [math.inf if nsfsfolded[j] <= 0.0 else ssfsfolded[j]/nsfsfolded[j] for j in range(len(nsfsfolded))]
+        if subranges is not None:
+            firstsbrbin = subranges[0][0]
+            tempnsfs = nsfsfolded[:firstsbrbin]
+            tempssfs = ssfsfolded[:firstsbrbin]
+            ratios = ratios[:firstsbrbin]
+            for subrange in subranges:
+                nm = sum(nsfsfolded[subrange[0]:subrange[1]])
+                dm = sum(ssfsfolded[subrange[0]:subrange[1]])
+                ratios.append(nm/dm)
+                tempnsfs.append(dm)
+                tempssfs.append(nm)
+            nsfsfolded = tempnsfs
+            ssfsfolded = tempssfs
         return nsfsfolded,ssfsfolded,ratios
     else:
         ratios = [math.inf if nsfs[j] <= 0.0 else ssfs[j]/nsfs[j] for j in range(len(nsfs))]
+        if subranges is not None:
+            firstsbrbin = subranges[0][0]
+            tempnsfs = nsfs[:firstsbrbin]
+            tempssfs = ssfs[:firstsbrbin]
+            ratios = ratios[:firstsbrbin]
+            for subrange in subranges:
+                nm = sum(nsfs[subrange[0]:subrange[1]])
+                dm = sum(ssfs[subrange[0]:subrange[1]])
+                ratios.append(nm/dm)
+                tempnsfs.append(dm)
+                tempssfs.append(nm)
+            nsfs = tempnsfs
+            ssfs = tempssfs
         return nsfs,ssfs,ratios
 
 
