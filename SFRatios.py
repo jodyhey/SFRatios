@@ -54,6 +54,13 @@ import random
 import time
 import argparse
 import sys
+# Get the absolute directory of the script currently running
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the parent directory (Go up one level from the script)
+parent_dir = os.path.dirname(current_script_dir)
+sys.path.insert(0, parent_dir)
+# Build the path to SFRatios.py
+import SFRatios_functions
 import SFRatios_functions as SRF 
 from scipy.optimize import OptimizeWarning
 import warnings
@@ -135,7 +142,7 @@ def find_subranges(neusfs, args):
 
 
 
-def getSFSratios(args,fn,dofolded,isfolded = False,dontkeepzeroratios=False): 
+def getSFSratios(args,fn,dofolded,isfolded = False): 
     """
         data text file format: 
             line 1:  arbitrary text
@@ -156,10 +163,16 @@ def getSFSratios(args,fn,dofolded,isfolded = False,dontkeepzeroratios=False):
         (dofolded == True and isfolded == True) not allowed
 
     """
+    seps = [' ', '\t', ',']
     lines = open(fn,'r').readlines()
     datafileheader = lines[0].strip()
     sfss = []
     for line in [lines[1],lines[3]]: # neutral, skip a line, then selected 
+        
+
+# normalize
+        for sep in seps:
+            line = line.replace(sep, ' ')
         if "." in line:
             sfs = list(map(float,line.strip().split()))
         else:
@@ -185,17 +198,22 @@ def getSFSratios(args,fn,dofolded,isfolded = False,dontkeepzeroratios=False):
         neusfs = sfss[0]
         selsfs = sfss[1]
         nc = 2*(len(neusfs) - 1) 
-    if dontkeepzeroratios == False:
+    # this was previously "if dontkeepzeroratios == False:"  and the function call had this on by default,  even though args.dontkeepzeroratios had been defined as true  - i.e. a bug 
+    if args.dontkeepzeroratios == False:
         ratios = [math.inf if  neusfs[j] <= 0.0 else selsfs[j]/neusfs[j] for j in range(len(neusfs))]
     else:
         ratios = [math.inf if  (neusfs[j] <= 0.0 or selsfs[j] <= 0.0) else selsfs[j]/neusfs[j] for j in range(len(neusfs))]
     thetaNest = sum(neusfs)/sum([1/i for i in range(1,nc )]) # this should work whether or not the sfs is folded 
     thetaSest = sum(selsfs)/sum([1/i for i in range(1,nc )]) # this should work whether or not the sfs is folded 
+    if thetaNest <= 0.0 or not math.isfinite(thetaNest):
+        raise ValueError("Neutral SFS has zero or non-finite total count; cannot estimate thetaNspace")
+    if thetaSest < 0.0 or not math.isfinite(thetaSest):
+        raise ValueError("Selected SFS has non-finite total count")    
     # thetaNspace used for integrating over thetaN 
     thetaNspace = np.logspace(np.log10(thetaNest/math.sqrt(args.thetaNspacerange)), np.log10(thetaNest*math.sqrt(args.thetaNspacerange)), num=101) # used for likelihood calculation,  logspace integrates better than linspace
     args.subranges = None
     if args.mindenom is not None:
-        args.maxi = len(neusfs)
+        args.maxi = len(neusfs)-1
         for i,c in enumerate(neusfs[1:]):
             if c < args.mindenom:
                 args.maxi = i
@@ -208,7 +226,11 @@ def getSFSratios(args,fn,dofolded,isfolded = False,dontkeepzeroratios=False):
             for subrange in args.subranges:
                 nm = sum(selsfs[subrange[0]:subrange[1]])
                 dm = sum(neusfs[subrange[0]:subrange[1]])
-                ratios.append(nm/dm)
+                if args.dontkeepzeroratios == False:
+                    rtemp = math.inf if dm <= 0.0 else nm/dm 
+                else:
+                    rtemp = math.inf if (dm <= 0.0 or nm <= 0.0) else nm/dm
+                ratios.append(rtemp)
                 tempneusfs.append(dm)
                 tempselsfs.append(nm)
             args.maxi = None  # use subranges,  not maxi 
@@ -225,7 +247,9 @@ def update_table(X, headers, new_data, new_labels):
     for i in range(len(new_data[0])):
         if len(X) <= i:
             X.append([])
-        formatted_row = [f"{float(new_data[0][i]):.1f}", f"{float(new_data[1][i]):.1f}", f"{float(new_data[2][i]):.4g}"]
+        ratiotemp = "na" if math.isinf(float(new_data[2][i])) else f"{float(new_data[2][i]):.4g}"
+        # formatted_row = [f"{float(new_data[0][i]):.1f}", f"{float(new_data[1][i]):.1f}", f"{float(new_data[2][i]):.4g}"]
+        formatted_row = [f"{float(new_data[0][i]):.1f}", f"{float(new_data[1][i]):.1f}", ratiotemp]
         X[i].extend(formatted_row)
     return X, headers
 
@@ -375,7 +399,8 @@ def set_bounds_and_start_possibilities(args,thetaNest,thetaSest,ntrials):
         for sv in startvals: sv.append(random.uniform(0.3,3))
         for sv in startvals: sv.append(random.uniform(0.5,1.5))
     elif args.densityof2Ns =="gamma":
-        bounds += [(-10000,0.0),(0.5,10)]        
+        # bounds += [(-10000,0.0),(0.5,10)]       
+        bounds += [(-10000,0.0),(0.1,5)]       
         for sv in startvals: sv.append(random.uniform(-10,-1))
         for sv in startvals: sv.append(random.uniform(0.5,2))
     elif args.densityof2Ns=="normal":
@@ -524,20 +549,61 @@ def generate_confidence_intervals(func,p_est, arglist, maxLL,bounds,alpha=0.05):
     likelihood_threshold = maxLL - chiinterval
     for i in range(len(p_est)):
         # Create a minimization function with fixed parameters except for the i-th one
+
+        # replace this block with codex suggested hardened code 
+        # def neg_log_likelihood_fixed(p_i):
+        #     p_fixed = p_est.copy()
+        #     p_fixed[i] = p_i
+        #     return -func(p_fixed, *arglist)  # Minimize negative log-likelihood
+        # lbtemp = bounds[i][0]/2
+        # if lbtemp  <   p_est[i] and  maxLL - neg_log_likelihood_fixed(lbtemp) > chiinterval:
+        #     lower_bound = brentq(lambda p_i: neg_log_likelihood_fixed(p_i) - likelihood_threshold, lbtemp, p_est[i])
+        # else:
+        #     lower_bound = np.nan # this should still be able to be written to the file
+        # ubtemp = bounds[i][1]*2
+        # if ubtemp  >   p_est[i] and  maxLL - neg_log_likelihood_fixed(ubtemp) > chiinterval:
+        #     upper_bound = brentq(lambda p_i: neg_log_likelihood_fixed(p_i) - likelihood_threshold, p_est[i], ubtemp)
+        # else:
+        #     upper_bound = np.nan # this should still be able to be written to the file
+
+        # confidence_intervals.append((lower_bound, upper_bound))
+    # codex suggested hardened code
         def neg_log_likelihood_fixed(p_i):
             p_fixed = p_est.copy()
             p_fixed[i] = p_i
-            return -func(p_fixed, *arglist)  # Minimize negative log-likelihood
-        lbtemp = bounds[i][0]/2
-        if lbtemp  <   p_est[i] and  maxLL - neg_log_likelihood_fixed(lbtemp) > chiinterval:
-            lower_bound = brentq(lambda p_i: neg_log_likelihood_fixed(p_i) - likelihood_threshold, lbtemp, p_est[i])
-        else:
-            lower_bound = np.nan # this should still be able to be written to the file
-        ubtemp = bounds[i][1]*2
-        if ubtemp  >   p_est[i] and  maxLL - neg_log_likelihood_fixed(ubtemp) > chiinterval:
-            upper_bound = brentq(lambda p_i: neg_log_likelihood_fixed(p_i) - likelihood_threshold, p_est[i], ubtemp)
-        else:
-            upper_bound = np.nan # this should still be able to be written to the file
+            val = func(p_fixed, *arglist)
+            if not math.isfinite(val):
+                return math.inf
+            return -val
+
+        lower_bound = np.nan
+        upper_bound = np.nan
+
+        lbtemp = bounds[i][0] / 2
+        try:
+            if lbtemp < p_est[i]:
+                lbval = neg_log_likelihood_fixed(lbtemp)
+                if math.isfinite(lbval) and maxLL - lbval > chiinterval:
+                    lower_bound = brentq(
+                        lambda p_i: neg_log_likelihood_fixed(p_i) - likelihood_threshold,
+                        lbtemp,
+                        p_est[i],
+                    )
+        except (ValueError, ArithmeticError):
+            lower_bound = np.nan
+
+        ubtemp = bounds[i][1] * 2
+        try:
+            if ubtemp > p_est[i]:
+                ubval = neg_log_likelihood_fixed(ubtemp)
+                if math.isfinite(ubval) and maxLL - ubval > chiinterval:
+                    upper_bound = brentq(
+                        lambda p_i: neg_log_likelihood_fixed(p_i) - likelihood_threshold,
+                        p_est[i],
+                        ubtemp,
+                    )
+        except (ValueError, ArithmeticError):
+            upper_bound = np.nan
 
         confidence_intervals.append((lower_bound, upper_bound))
     return confidence_intervals
@@ -557,7 +623,10 @@ def calcdistances(X):
         for i,row in enumerate(X):
             if i > 0:
                 c += 1
-                sumsq += pow(float(row[5]) -float(row[2]),2)
+                try: # might be some "na" values that need to be skipped
+                    sumsq += pow(float(row[5]) -float(row[2]),2)
+                except:
+                    pass
     RMSE = math.sqrt(sumsq/c)
     EucDis = math.sqrt(sumsq)
     return EucDis,RMSE
@@ -683,30 +752,63 @@ def run(args):
                 DA2result = None
         except Exception as e:
             DA2likelihood = -np.inf
+            DA2result = None
             outf = open(outfilename, "a")
             outf.write("\ndualannealing2 failed with message : {}\n".format(e))
             outf.close()
     else:
         DA1likelihood = DA2likelihood =-np.inf   
-        DA1result = DA2result = None     
-    [likelihood,result,outstring]= sorted([[OPTlikelihood,OPTresult,"Optimize"],[BHlikelihood,BHresult,"Basinhopping"],
-                                           [DA1likelihood,DA1result,"Dualannealing1"],[DA2likelihood,DA2result,"Dualannealing2"]], 
-                                           key=lambda x: x[0] if x[0] != -np.inf else float('-inf'))[-1]
+        DA1result = DA2result = None  
+    # replace this with code that traps nonfinite values    
+    # [likelihood,result,outstring]= sorted([[OPTlikelihood,OPTresult,"Optimize"],[BHlikelihood,BHresult,"Basinhopping"],
+    #                                        [DA1likelihood,DA1result,"Dualannealing1"],[DA2likelihood,DA2result,"Dualannealing2"]], 
+    #                                        key=lambda x: x[0] if x[0] != -np.inf else float('-inf'))[-1]
+    candidates = [
+                    (OPTlikelihood, OPTresult, "Optimize"),
+                    (BHlikelihood, BHresult, "Basinhopping"),
+                    (DA1likelihood, DA1result, "Dualannealing1"),
+                    (DA2likelihood, DA2result, "Dualannealing2"),
+                ]
+    filtered = []
+    for c in candidates:
+        if c[1] is not None and math.isfinite(c[0]):
+            filtered.append(c)
+    candidates = filtered    
+
+    if not candidates:
+        raise RuntimeError("All optimization attempts failed or returned non-finite likelihoods")
+
+    likelihood, result, outstring = max(candidates, key=lambda x: x[0])    
     confidence_intervals = generate_confidence_intervals(func,list(result.x), arglist, likelihood,boundsarray)
     pm0tempval,pmmasstempval,pmvaltempval,paramdic,expectation,mode = writeresults(args,args.numparams,thetaNest,paramlabels,resultlabels,resultformatstrs,result.x,likelihood,confidence_intervals,outfilename,"\nOptimization: {}\nMaximized Likelihood, AIC, Parameter Estimates, 95% Confidence Intervals:\n".format(outstring))
     X,headers = buildSFStable(args,paramdic,pm0tempval,pmmasstempval,pmvaltempval,X,headers,nc)
-    EucDis, RMSE = calcdistances(X)
+    if args.sumbins == False:
+        EucDis, RMSE = calcdistances(X)
+    else:
+        EucDis, Rmse = ("na","na")
     # WRITE a TABLE OF DATA and RATIOS UNDER ESTIMATED MODELS        
     outf = open(outfilename, "a")
-    outf.write("\nCompare data and optimization estimates\n\tEuclidean Distance: {:.4f} RMSE: {:.5f}\n".format(EucDis,RMSE))
+    if args.sumbins == False:
+        outf.write("\nCompare data and optimization estimates\n\tEuclidean Distance: {:.4f} RMSE: {:.5f}\n".format(EucDis,RMSE))
     if args.estimate_both_thetas == False:
         outf.write("\t*Expected counts generated with Wright-Fisher theta estimates (SFRatios does not provide theta estimates)\n")
         outf.write("--------------------------------------------------------------------------------------------------------------\n") 
     else:
         outf.write("------------------------------------------------------------------------------------------\n") 
-    outf.write("i\t" + "\t".join(headers) + "\n")
-    for i,row in enumerate(X):
-        outf.write("{}\t".format(i) +"\t".join(row) + "\n")            
+    if args.subranges is not None:
+        maxi_single_bin = args.subranges[0][0]
+        outf.write("i\t#bins\t" + "\t".join(headers) + "\n")
+        j = 0
+        for i,row in enumerate(X):
+            if i < maxi_single_bin:
+                outf.write("{}\t".format(i) + "1\t" + "\t".join(row) + "\n")    
+            else:
+                outf.write("{}\t".format(i) + "{}\t".format(len(range(args.subranges[j][0],args.subranges[j][1]))) + "\t".join(row) + "\n")    
+                j += 1
+    else:
+        outf.write("i\t" + "\t".join(headers) + "\n")
+        for i,row in enumerate(X):
+            outf.write("{}\t".format(i) +"\t".join(row) + "\n")            
     #clear caches and write cache usage to
     SRF.clear_cache(outf = outf if miscDebug else False)
     # WRITE THE TIME AND CLOSE
@@ -745,7 +847,7 @@ def parsecommandline():
     parser.add_argument("-z",dest="estimate_pointmass0",action="store_true",default=False,help="include a proportion of the mass at zero in the density model")    
     parser.add_argument("-Q", dest="thetaratiorange", type=float, nargs="+", default=None, help="optional range for thetaratio (i.e. mutation rate ratio), low end followed by high end ")
     parser.add_argument("-v",dest="mindenom",default=None,type=int,help="optional setting the minimum count in a denominator, e.g. 10. If used, args.maxi is set to this bin number")
-    parser.add_argument("-w",dest="sumbins",action="store_true",default=False,help=" requies -v, if true sums neutral SFS bins till mindenom is reached ") 
+    parser.add_argument("-w",dest="sumbins",action="store_true",default=False,help=" requires -v, if true sums neutral SFS bins till mindenom is reached ") 
 
     args  =  parser.parse_args(sys.argv[1:])  
     args.commandstring = " ".join(sys.argv[1:])
@@ -774,6 +876,15 @@ def parsecommandline():
         parser.error(' cannot use -c fix_theta_ratio with -w estimate_both_thetas ')
     if args.foldstatus != "unfolded" and args.includemisspec == True:
         parser.error(' cannot include a misspecification term (-e) when SFS is not folded (-f)')
+    if args.sumbins and args.mindenom is None:
+        parser.error('cannot use -w / sumbins without -v / mindenom')
+    if args.mindenom is not None and args.mindenom <= 0:
+        parser.error('-v / mindenom must be positive')
+    if args.thetaratiorange is not None:
+        if len(args.thetaratiorange) != 2:
+            parser.error('-Q / thetaratiorange requires exactly two values: low high')
+        if args.thetaratiorange[0] <= 0 or args.thetaratiorange[0] >= args.thetaratiorange[1]:
+            parser.error('-Q / thetaratiorange must satisfy 0 < low < high')        
     args.optimizetries = defaultnumberofbasicoptimizatinos
     args.dontkeepzeroratios = True  # played with this but it seems to work better when we don't use ratios of zero. 
     return args
@@ -812,4 +923,3 @@ if __name__ == '__main__':
             stats.sort_stats('cumulative')
             stats.print_stats('SFRatios_functions')
         print("SFRatios_functions profile stats written too {}".format(prffilename))
-
